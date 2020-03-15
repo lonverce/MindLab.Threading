@@ -3,13 +3,8 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Authors>lonverce</Authors>
-    <Description>MindLab.Messaging is a light-weight library for providing message publish&amp;subscription in proc.</Description>
     <LangVersion>8</LangVersion>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
   </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\MindLab.Threading\MindLab.Threading.csproj" />
-  </ItemGroup>
 
 </Project>

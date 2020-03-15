@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MindLab.Messaging", "MindLa
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{ECD22F3C-297C-463C-9C91-D8C503786AD9}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MindLab.Threading", "MindLab.Threading\MindLab.Threading.csproj", "{700AB118-553A-4BC7-AE11-FC15A00221D3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -17,6 +19,10 @@ Global
 		{FB591466-5245-474A-AEC2-83B3430A78BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FB591466-5245-474A-AEC2-83B3430A78BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FB591466-5245-474A-AEC2-83B3430A78BD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
