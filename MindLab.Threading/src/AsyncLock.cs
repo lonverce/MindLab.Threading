@@ -55,6 +55,12 @@ namespace MindLab.Threading
         /// <returns></returns>
         public async Task<IDisposable> LockAsync(CancellationToken cancellation = default)
         {
+            cancellation.ThrowIfCancellationRequested();
+            if (TryLock(out var lockDisposer))
+            {
+                return lockDisposer;
+            }
+
             await m_semaphore.WaitAsync(cancellation);
             return new SemaphoreReleaseOnce(m_semaphore);
         }

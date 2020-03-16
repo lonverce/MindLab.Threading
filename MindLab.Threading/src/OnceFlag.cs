@@ -43,7 +43,7 @@ namespace MindLab.Threading
                 return false;
             }
 
-            return Interlocked.CompareExchange(ref m_flag, TRUE, FALSE) == TRUE;
+            return Interlocked.CompareExchange(ref m_flag, TRUE, FALSE) == FALSE;
         }
     }
 }

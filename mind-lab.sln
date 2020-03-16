@@ -3,11 +3,13 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.29519.87
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MindLab.Messaging", "MindLab.Messaging\MindLab.Messaging.csproj", "{FB591466-5245-474A-AEC2-83B3430A78BD}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MindLab.Messaging", "MindLab.Messaging\MindLab.Messaging.csproj", "{FB591466-5245-474A-AEC2-83B3430A78BD}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{ECD22F3C-297C-463C-9C91-D8C503786AD9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MindLab.Threading", "MindLab.Threading\MindLab.Threading.csproj", "{700AB118-553A-4BC7-AE11-FC15A00221D3}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MindLab.Threading", "MindLab.Threading\MindLab.Threading.csproj", "{700AB118-553A-4BC7-AE11-FC15A00221D3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MindLab.Threading.Tests", "MindLab.Threading.Tests\MindLab.Threading.Tests.csproj", "{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -23,9 +25,16 @@ Global
 		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{700AB118-553A-4BC7-AE11-FC15A00221D3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6} = {ECD22F3C-297C-463C-9C91-D8C503786AD9}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {54741036-4668-4480-8B99-AC8436BAA573}
