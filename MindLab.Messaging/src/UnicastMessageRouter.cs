@@ -18,7 +18,7 @@ namespace MindLab.Messaging
     {
         #region Fields
         
-        private readonly AsyncLock m_lock = new AsyncLock();
+        private readonly CasLock m_lock = new CasLock();
         private readonly Dictionary<string, AsyncMessageHandler<TMessage>[]> m_subscribers 
             = new Dictionary<string, AsyncMessageHandler<TMessage>[]>(StringComparer.CurrentCultureIgnoreCase);
 

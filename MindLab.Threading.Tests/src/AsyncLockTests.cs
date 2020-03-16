@@ -12,7 +12,7 @@ namespace MindLab.Threading.Tests
         [TestMethod]
         public async Task LockAsync_LockTwice_FirstOkButSecondBlocked()
         {
-            var locker = new AsyncLock();
+            var locker = new CasLock();
             await locker.LockAsync();
 
             Assert.IsFalse(locker.TryLock(out _));
@@ -21,7 +21,7 @@ namespace MindLab.Threading.Tests
         [TestMethod]
         public async Task LockAsync_LockTwiceAndDisposeFirst_FirstOkAndThenSecondOk()
         {
-            var locker = new AsyncLock();
+            var locker = new CasLock();
             var disposer = await locker.LockAsync();
             var l2Task = locker.LockAsync();
             disposer.Dispose();
@@ -31,7 +31,7 @@ namespace MindLab.Threading.Tests
         [TestMethod]
         public async Task LockAsync_LockAgainWithCancel_OperationCancelled()
         {
-            var locker = new AsyncLock();
+            var locker = new CasLock();
             using (await locker.LockAsync())
             {
                 using var tokenSrc = new CancellationTokenSource(TimeSpan.FromSeconds(1));
@@ -43,7 +43,7 @@ namespace MindLab.Threading.Tests
         public async Task LockAsync_SafeInMultiThreads()
         {
             int value = 0;
-            var locker = new AsyncLock();
+            var locker = new CasLock();
 
             async Task IncreaseAsync()
             {

@@ -45,7 +45,7 @@ namespace MindLab.Threading
     /// ]]>
     /// </code>
     /// </example>
-    public class AsyncLock
+    public class CasLock : IAsyncLock
     {
         #region Fields
         private volatile IReadOnlyList<TaskCompletionSource<LockStatus>> m_subscribers 
@@ -66,10 +66,10 @@ namespace MindLab.Threading
 
         private class LockDisposer : IDisposable
         {
-            private readonly AsyncLock m_locker;
+            private readonly CasLock m_locker;
             private readonly OnceFlag m_flag = new OnceFlag();
 
-            public LockDisposer(AsyncLock locker, TaskCompletionSource<LockStatus> completion)
+            public LockDisposer(CasLock locker, TaskCompletionSource<LockStatus> completion)
             {
                 Contract.Assert(completion.Task.IsCompleted && completion.Task.Result == LockStatus.Activated);
                 m_locker = locker;
