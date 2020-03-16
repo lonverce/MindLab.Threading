@@ -12,7 +12,7 @@ namespace MindLab.Threading
     public class MonitorLock : IAsyncLock, ILockDisposable
     {
         private readonly object m_locker = new object();
-        private readonly List<TaskCompletionSource<LockStatus>> m_subscribers = new List<TaskCompletionSource<LockStatus>>();
+        private readonly LinkedList<TaskCompletionSource<LockStatus>> m_subscribers = new LinkedList<TaskCompletionSource<LockStatus>>();
 
         /// <summary>
         /// 等待进入临界区
@@ -28,7 +28,7 @@ namespace MindLab.Threading
             lock (m_locker)
             {
                 cancellation.ThrowIfCancellationRequested();
-                m_subscribers.Add(completion);
+                m_subscribers.AddLast(completion);
                 if (m_subscribers.Count == 1)
                 {
                     isFirst = true;
@@ -56,11 +56,11 @@ namespace MindLab.Threading
                 TaskCompletionSource<LockStatus> next = null;
                 lock (m_locker)
                 {
-                    var activateNext = m_subscribers[0] == completion;
+                    var activateNext = m_subscribers.First.Value == completion;
                     m_subscribers.Remove(completion);
                     if (activateNext)
                     {
-                        next = m_subscribers[0];
+                        next = m_subscribers.First.Value;
                     }
                 }
 
@@ -91,7 +91,7 @@ namespace MindLab.Threading
 
                 var completion = new TaskCompletionSource<LockStatus>();
                 completion.SetResult(LockStatus.Activated);
-                m_subscribers.Add(completion);
+                m_subscribers.AddFirst(completion);
                 lockDisposer = new LockDisposer(this);
             }
             finally
@@ -107,11 +107,11 @@ namespace MindLab.Threading
             TaskCompletionSource<LockStatus> next = null;
             lock (m_locker)
             {
-                m_subscribers.RemoveAt(0);
+                m_subscribers.RemoveFirst();
 
                 if (m_subscribers.Any())
                 {
-                    next = m_subscribers[0];
+                    next = m_subscribers.First.Value;
                 }
             }
 

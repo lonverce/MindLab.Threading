@@ -15,6 +15,7 @@ namespace MindLab.Threading.Tests
         }
 
         [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        [TestCase(typeof(SemaphoreLock))]
         public async Task LockAsync_LockTwice_FirstOkButSecondBlocked(Type lockerType)
         {
             var locker = CreateLock(lockerType);
@@ -24,6 +25,7 @@ namespace MindLab.Threading.Tests
         }
 
         [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        [TestCase(typeof(SemaphoreLock))]
         public async Task LockAsync_LockTwiceAndDisposeFirst_FirstOkAndThenSecondOk(Type lockerType)
         {
             var locker = CreateLock(lockerType);
@@ -34,6 +36,7 @@ namespace MindLab.Threading.Tests
         }
 
         [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        [TestCase(typeof(SemaphoreLock))]
         public async Task LockAsync_LockAgainWithCancel_OperationCancelled(Type lockerType)
         {
             var locker = CreateLock(lockerType);
@@ -46,6 +49,7 @@ namespace MindLab.Threading.Tests
         }
 
         [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        [TestCase(typeof(SemaphoreLock))]
         public async Task LockAsync_SafeInMultiThreads(Type lockerType)
         {
             int value = 0;
@@ -63,32 +67,6 @@ namespace MindLab.Threading.Tests
             }
 
             await Task.WhenAll(Enumerable.Repeat((Func<Task>) IncreaseAsync, 20).Select(func => Task.Run(func)).ToArray());
-            Assert.AreEqual(20000, value);
-        }
-
-        [Test]
-        public async Task Semaphore_SafeInMultiThreads()
-        {
-            int value = 0;
-            var locker = new SemaphoreSlim(1, 1);
-
-            async Task IncreaseAsync()
-            {
-                for (var i = 0; i < 1000; i++)
-                {
-                    await locker.WaitAsync();
-                    try
-                    {
-                        value++;
-                    }
-                    finally
-                    {
-                        locker.Release();
-                    }
-                }
-            }
-
-            await Task.WhenAll(Enumerable.Repeat((Func<Task>)IncreaseAsync, 20).Select(func => Task.Run(func)).ToArray());
             Assert.AreEqual(20000, value);
         }
     }
