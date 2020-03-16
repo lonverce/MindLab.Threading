@@ -25,7 +25,7 @@ namespace MindLab.Threading
     /// </example>
     public class OnceFlag
     {
-        private int m_flag = FALSE;
+        private volatile int m_flag = FALSE;
         private const int TRUE = 1, FALSE = 0;
 
         /// <summary>

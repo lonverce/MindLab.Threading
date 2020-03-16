@@ -47,7 +47,7 @@ namespace MindLab.Threading.Tests
 
             async Task IncreaseAsync()
             {
-                for (var i = 0; i < 10; i++)
+                for (var i = 0; i < 1000; i++)
                 {
                     using (await locker.LockAsync())
                     {
@@ -56,8 +56,34 @@ namespace MindLab.Threading.Tests
                 }
             }
 
-            await Task.WhenAll(Enumerable.Repeat((Func<Task>) IncreaseAsync, 10).Select(func => func()).ToArray());
-            Assert.AreEqual(100, value);
+            await Task.WhenAll(Enumerable.Repeat((Func<Task>) IncreaseAsync, 20).Select(func => Task.Run(func)).ToArray());
+            Assert.AreEqual(20000, value);
+        }
+
+        [TestMethod]
+        public async Task Semaphore_SafeInMultiThreads()
+        {
+            int value = 0;
+            var locker = new SemaphoreSlim(1, 1);
+
+            async Task IncreaseAsync()
+            {
+                for (var i = 0; i < 1000; i++)
+                {
+                    await locker.WaitAsync();
+                    try
+                    {
+                        value++;
+                    }
+                    finally
+                    {
+                        locker.Release();
+                    }
+                }
+            }
+
+            await Task.WhenAll(Enumerable.Repeat((Func<Task>)IncreaseAsync, 20).Select(func => Task.Run(func)).ToArray());
+            Assert.AreEqual(20000, value);
         }
     }
 }

@@ -54,7 +54,7 @@ namespace MindLab.Threading
 
         #region LockStatus
 
-        private enum LockStatus
+        private enum LockStatus : byte
         {
             Activated,
             Cancelled,
@@ -105,20 +105,25 @@ namespace MindLab.Threading
 
         #region Private Methods
 
+        private delegate IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateDelegate(
+            IReadOnlyList<TaskCompletionSource<LockStatus>> src, 
+            object state);
+
         private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateSubscribers(
-            Func<IReadOnlyList<TaskCompletionSource<LockStatus>>, IEnumerable<TaskCompletionSource<LockStatus>>> updateFunc,
+            UpdateDelegate updateFunc,
+            object state,
             CancellationToken cancellation = default)
         {
             IReadOnlyList<TaskCompletionSource<LockStatus>> currentSubscribers;
-            IReadOnlyList<TaskCompletionSource<LockStatus>> prevSubscribers;
+            IReadOnlyList<TaskCompletionSource<LockStatus>> prevSubscribers = m_subscribers;
 
             do
             {
                 cancellation.ThrowIfCancellationRequested();
-                currentSubscribers = m_subscribers;
+                currentSubscribers = prevSubscribers;
 
                 // copy on write
-                var nextVersionSubscribers = updateFunc(currentSubscribers)?.ToArray();
+                var nextVersionSubscribers = updateFunc(currentSubscribers, state);
                 if (nextVersionSubscribers == null)
                 {
                     return null;
@@ -135,11 +140,42 @@ namespace MindLab.Threading
             return prevSubscribers;
         }
 
+        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateCancel(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
+            object state)
+        {
+            return src.Where(source => source != state).ToArray();
+        }
+
+        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateLock(IReadOnlyList<TaskCompletionSource<LockStatus>> list,
+            object state)
+        {
+            var src = (TaskCompletionSource<LockStatus>[])list;
+            var dest = new TaskCompletionSource<LockStatus>[src.Length + 1];
+            Array.Copy(src, 0, dest, 0, src.Length);
+            dest[src.Length] = (TaskCompletionSource<LockStatus>)state;
+            return dest;
+        }
+
+        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateUnlock(IReadOnlyList<TaskCompletionSource<LockStatus>> sources,
+            object state)
+        {
+            var src = (TaskCompletionSource<LockStatus>[])sources;
+            var dest = new TaskCompletionSource<LockStatus>[src.Length - 1];
+            Array.Copy(src, 1, dest, 0, dest.Length);
+            return dest;
+        }
+
+        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateTryLock(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
+            object state)
+        {
+            return src.Any() ? null : (IReadOnlyList<TaskCompletionSource<LockStatus>>)state;
+        }
+
         private void InternalCancelLock(TaskCompletionSource<LockStatus> completion)
         {
             Contract.Assert(completion.Task.IsCompleted && completion.Task.Result == LockStatus.Cancelled);
             var prevSubscribers = UpdateSubscribers(
-                sources => sources.Where(source => source != completion));
+                UpdateCancel, completion);
             
             if (prevSubscribers[0] == completion && prevSubscribers.Count > 1)
             {
@@ -150,9 +186,7 @@ namespace MindLab.Threading
 
         private void InternalUnlock()
         {
-            var prevSubscribers = UpdateSubscribers(
-                sources => sources.Skip(1));
-            
+            var prevSubscribers = UpdateSubscribers(UpdateUnlock, null);
             if (prevSubscribers.Count > 1)
             {
                 // 触发下一个锁
@@ -163,9 +197,7 @@ namespace MindLab.Threading
         private async Task<IDisposable> InternalLock(CancellationToken cancellation)
         {
             var completion = new TaskCompletionSource<LockStatus>();
-            var prevSubscribers = UpdateSubscribers(
-                list => list.Append(completion), 
-                cancellation);
+            var prevSubscribers = UpdateSubscribers(UpdateLock, completion, cancellation);
 
             // 如果当前没有其他等候者, 则表示我们成功进入临界区; 否则, 表示我们进入等候区
             if (prevSubscribers.Count == 0)
@@ -173,7 +205,7 @@ namespace MindLab.Threading
                 completion.TrySetResult(LockStatus.Activated);
             }
 
-            await using (cancellation.Register(() => completion.TrySetResult(LockStatus.Cancelled)))
+            await using (cancellation.Register(CancelCompletion, completion, false))
             {
                 if (cancellation.IsCancellationRequested)
                 {
@@ -191,15 +223,17 @@ namespace MindLab.Threading
             }
         }
 
+        private void CancelCompletion(object state)
+        {
+            ((TaskCompletionSource<LockStatus>)state).TrySetResult(LockStatus.Cancelled);
+        }
+
         private bool InternalTryLock(out IDisposable lockDisposer)
         {
             var completion = new TaskCompletionSource<LockStatus>();
             completion.SetResult(LockStatus.Activated);
-
-            var prev = UpdateSubscribers(list =>
-            {
-                return list.Any() ? null : new[] {completion};
-            });
+            var cps = new[] { completion };
+            var prev = UpdateSubscribers(UpdateTryLock, cps);
 
             if (prev == null)
             {
