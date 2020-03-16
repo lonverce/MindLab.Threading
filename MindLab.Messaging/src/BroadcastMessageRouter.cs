@@ -14,7 +14,7 @@ namespace MindLab.Messaging
         IMessagePublisher<TMessage>, ICallbackDisposable<TMessage>
     {
         private volatile AsyncMessageHandler<TMessage>[] m_handlers = Array.Empty<AsyncMessageHandler<TMessage>>();
-        private readonly CasLock m_lock = new CasLock();
+        private readonly IAsyncLock m_lock = new MonitorLock();
 
         /// <summary>
         /// 订阅注册指定<paramref name="key"/>关联的回调处理
