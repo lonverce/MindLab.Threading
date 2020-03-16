@@ -1,49 +1,55 @@
 ﻿using System;
 using System.Linq;
 using System.Threading;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading.Tasks;
+using NUnit.Framework;
 
 namespace MindLab.Threading.Tests
 {
-    [TestClass]
+    [TestFixture]
     public class AsyncLockTests
     {
-        [TestMethod]
-        public async Task LockAsync_LockTwice_FirstOkButSecondBlocked()
+        private IAsyncLock CreateLock(Type lockerType)
         {
-            var locker = new CasLock();
+            return Activator.CreateInstance(lockerType) as IAsyncLock;
+        }
+
+        [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        public async Task LockAsync_LockTwice_FirstOkButSecondBlocked(Type lockerType)
+        {
+            var locker = CreateLock(lockerType);
             await locker.LockAsync();
 
             Assert.IsFalse(locker.TryLock(out _));
         }
 
-        [TestMethod]
-        public async Task LockAsync_LockTwiceAndDisposeFirst_FirstOkAndThenSecondOk()
+        [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        public async Task LockAsync_LockTwiceAndDisposeFirst_FirstOkAndThenSecondOk(Type lockerType)
         {
-            var locker = new CasLock();
+            var locker = CreateLock(lockerType);
             var disposer = await locker.LockAsync();
             var l2Task = locker.LockAsync();
             disposer.Dispose();
             Assert.IsTrue(l2Task.Wait(1000));
         }
 
-        [TestMethod]
-        public async Task LockAsync_LockAgainWithCancel_OperationCancelled()
+        [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        public async Task LockAsync_LockAgainWithCancel_OperationCancelled(Type lockerType)
         {
-            var locker = new CasLock();
+            var locker = CreateLock(lockerType);
             using (await locker.LockAsync())
             {
                 using var tokenSrc = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-                await Assert.ThrowsExceptionAsync<OperationCanceledException>(async () => await locker.LockAsync(tokenSrc.Token));
+                
+                Assert.CatchAsync<OperationCanceledException>(async () => await locker.LockAsync(tokenSrc.Token));
             }
         }
 
-        [TestMethod]
-        public async Task LockAsync_SafeInMultiThreads()
+        [Test, TestCase(typeof(CasLock)), TestCase(typeof(MonitorLock))]
+        public async Task LockAsync_SafeInMultiThreads(Type lockerType)
         {
             int value = 0;
-            var locker = new CasLock();
+            var locker = CreateLock(lockerType);
 
             async Task IncreaseAsync()
             {
@@ -60,7 +66,7 @@ namespace MindLab.Threading.Tests
             Assert.AreEqual(20000, value);
         }
 
-        [TestMethod]
+        [Test]
         public async Task Semaphore_SafeInMultiThreads()
         {
             int value = 0;

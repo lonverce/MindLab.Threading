@@ -4,103 +4,17 @@ using System.Diagnostics.Contracts;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MindLab.Threading.Internals;
 
 namespace MindLab.Threading
 {
-    /// <summary>提供基于async/await异步阻塞的互斥锁</summary>
-    /// <example>
-    /// <code>
-    /// <![CDATA[
-    /// public class MyClass
-    /// {
-    ///     private readonly AsyncLock m_lock = new AsyncLock();
-    ///     private int m_value;    
-    /// 
-    ///     public async Task IncreaseAsync(CancellationToken cancellation)
-    ///     {
-    ///         using(await m_lock.LockAsync(cancellation))
-    ///         {
-    ///             m_value++;
-    ///         }
-    ///     }
-    ///     
-    ///     public bool TryIncrease()
-    ///     {
-    ///         if(!m_lock.TryLock(out var locker))
-    ///         {
-    ///             return false;
-    ///         }
-    ///         m_value++;
-    ///         locker.Dispose();
-    ///     }
-    ///     
-    ///     public async Task DecreaseAsync(CancellationToken cancellation)
-    ///     {
-    ///         using(await m_lock.LockAsync(cancellation))
-    ///         {
-    ///             m_value--;
-    ///         }
-    ///     }
-    /// }
-    /// ]]>
-    /// </code>
-    /// </example>
-    public class CasLock : IAsyncLock
+    /// <summary>提供基于CAS无锁实现的异步互斥锁</summary>
+    /// <seealso cref="IAsyncLock"/>
+    public class CasLock : IAsyncLock, ILockDisposable
     {
         #region Fields
         private volatile IReadOnlyList<TaskCompletionSource<LockStatus>> m_subscribers 
             = Array.Empty<TaskCompletionSource<LockStatus>>();
-        #endregion
-
-        #region LockStatus
-
-        private enum LockStatus : byte
-        {
-            Activated,
-            Cancelled,
-        }
-
-        #endregion
-
-        #region Disposer
-
-        private class LockDisposer : IDisposable
-        {
-            private readonly CasLock m_locker;
-            private readonly OnceFlag m_flag = new OnceFlag();
-
-            public LockDisposer(CasLock locker, TaskCompletionSource<LockStatus> completion)
-            {
-                Contract.Assert(completion.Task.IsCompleted && completion.Task.Result == LockStatus.Activated);
-                m_locker = locker;
-            }
-
-            ~LockDisposer()
-            {
-                Dispose(false);
-            }
-
-            private void Dispose(bool disposing)
-            {
-                if (!m_flag.TrySet())
-                {
-                    return;
-                }
-
-                m_locker.InternalUnlock();
-
-                if (disposing)
-                {
-                    GC.SuppressFinalize(this);
-                }
-            }
-
-            public void Dispose()
-            {
-                Dispose(true);
-            }
-        }
-
         #endregion
 
         #region Private Methods
@@ -140,13 +54,13 @@ namespace MindLab.Threading
             return prevSubscribers;
         }
 
-        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateCancel(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
+        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateCancel(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
             object state)
         {
             return src.Where(source => source != state).ToArray();
         }
 
-        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateLock(IReadOnlyList<TaskCompletionSource<LockStatus>> list,
+        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateLock(IReadOnlyList<TaskCompletionSource<LockStatus>> list,
             object state)
         {
             var src = (TaskCompletionSource<LockStatus>[])list;
@@ -156,7 +70,7 @@ namespace MindLab.Threading
             return dest;
         }
 
-        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateUnlock(IReadOnlyList<TaskCompletionSource<LockStatus>> sources,
+        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateUnlock(IReadOnlyList<TaskCompletionSource<LockStatus>> sources,
             object state)
         {
             var src = (TaskCompletionSource<LockStatus>[])sources;
@@ -165,7 +79,7 @@ namespace MindLab.Threading
             return dest;
         }
 
-        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateTryLock(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
+        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateTryLock(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
             object state)
         {
             return src.Any() ? null : (IReadOnlyList<TaskCompletionSource<LockStatus>>)state;
@@ -184,7 +98,7 @@ namespace MindLab.Threading
             }
         }
 
-        private void InternalUnlock()
+        void ILockDisposable.InternalUnlock()
         {
             var prevSubscribers = UpdateSubscribers(UpdateUnlock, null);
             if (prevSubscribers.Count > 1)
@@ -215,7 +129,7 @@ namespace MindLab.Threading
                 var result = await completion.Task;
                 if (result == LockStatus.Activated)
                 {
-                    return new LockDisposer(this, completion);
+                    return new LockDisposer(this);
                 }
 
                 InternalCancelLock(completion);
@@ -223,7 +137,7 @@ namespace MindLab.Threading
             }
         }
 
-        private void CancelCompletion(object state)
+        private static void CancelCompletion(object state)
         {
             ((TaskCompletionSource<LockStatus>)state).TrySetResult(LockStatus.Cancelled);
         }
@@ -241,7 +155,7 @@ namespace MindLab.Threading
                 return false;
             }
 
-            lockDisposer = new LockDisposer(this, completion);
+            lockDisposer = new LockDisposer(this);
             return true;
         }
 
