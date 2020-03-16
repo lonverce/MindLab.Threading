@@ -1,11 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics.Contracts;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace MindLab.Threading
 {
-    using Internals;
-
     /// <summary>提供基于async/await异步阻塞的互斥锁</summary>
     /// <example>
     /// <code>
@@ -46,7 +47,173 @@ namespace MindLab.Threading
     /// </example>
     public class AsyncLock
     {
-        private readonly SemaphoreSlim m_semaphore = new SemaphoreSlim(1,1);
+        #region Fields
+        private volatile IReadOnlyList<TaskCompletionSource<LockStatus>> m_subscribers 
+            = Array.Empty<TaskCompletionSource<LockStatus>>();
+        #endregion
+
+        #region LockStatus
+
+        private enum LockStatus
+        {
+            Activated,
+            Cancelled,
+        }
+
+        #endregion
+
+        #region Disposer
+
+        private class LockDisposer : IDisposable
+        {
+            private readonly AsyncLock m_locker;
+            private readonly OnceFlag m_flag = new OnceFlag();
+
+            public LockDisposer(AsyncLock locker, TaskCompletionSource<LockStatus> completion)
+            {
+                Contract.Assert(completion.Task.IsCompleted && completion.Task.Result == LockStatus.Activated);
+                m_locker = locker;
+            }
+
+            ~LockDisposer()
+            {
+                Dispose(false);
+            }
+
+            private void Dispose(bool disposing)
+            {
+                if (!m_flag.TrySet())
+                {
+                    return;
+                }
+
+                m_locker.InternalUnlock();
+
+                if (disposing)
+                {
+                    GC.SuppressFinalize(this);
+                }
+            }
+
+            public void Dispose()
+            {
+                Dispose(true);
+            }
+        }
+
+        #endregion
+
+        #region Private Methods
+
+        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateSubscribers(
+            Func<IReadOnlyList<TaskCompletionSource<LockStatus>>, IEnumerable<TaskCompletionSource<LockStatus>>> updateFunc,
+            CancellationToken cancellation = default)
+        {
+            IReadOnlyList<TaskCompletionSource<LockStatus>> currentSubscribers;
+            IReadOnlyList<TaskCompletionSource<LockStatus>> prevSubscribers;
+
+            do
+            {
+                cancellation.ThrowIfCancellationRequested();
+                currentSubscribers = m_subscribers;
+
+                // copy on write
+                var nextVersionSubscribers = updateFunc(currentSubscribers)?.ToArray();
+                if (nextVersionSubscribers == null)
+                {
+                    return null;
+                }
+
+                prevSubscribers = Interlocked.CompareExchange(
+                    ref m_subscribers,
+                    nextVersionSubscribers,
+                    currentSubscribers);
+
+                Contract.Assert(prevSubscribers != null);
+            } while (!Equals(prevSubscribers, currentSubscribers));
+
+            return prevSubscribers;
+        }
+
+        private void InternalCancelLock(TaskCompletionSource<LockStatus> completion)
+        {
+            Contract.Assert(completion.Task.IsCompleted && completion.Task.Result == LockStatus.Cancelled);
+            var prevSubscribers = UpdateSubscribers(
+                sources => sources.Where(source => source != completion));
+            
+            if (prevSubscribers[0] == completion && prevSubscribers.Count > 1)
+            {
+                // 触发下一个锁
+                prevSubscribers[1].TrySetResult(LockStatus.Activated);
+            }
+        }
+
+        private void InternalUnlock()
+        {
+            var prevSubscribers = UpdateSubscribers(
+                sources => sources.Skip(1));
+            
+            if (prevSubscribers.Count > 1)
+            {
+                // 触发下一个锁
+                prevSubscribers[1].TrySetResult(LockStatus.Activated);
+            }
+        }
+
+        private async Task<IDisposable> InternalLock(CancellationToken cancellation)
+        {
+            var completion = new TaskCompletionSource<LockStatus>();
+            var prevSubscribers = UpdateSubscribers(
+                list => list.Append(completion), 
+                cancellation);
+
+            // 如果当前没有其他等候者, 则表示我们成功进入临界区; 否则, 表示我们进入等候区
+            if (prevSubscribers.Count == 0)
+            {
+                completion.TrySetResult(LockStatus.Activated);
+            }
+
+            await using (cancellation.Register(() => completion.TrySetResult(LockStatus.Cancelled)))
+            {
+                if (cancellation.IsCancellationRequested)
+                {
+                    completion.TrySetResult(LockStatus.Cancelled);
+                }
+
+                var result = await completion.Task;
+                if (result == LockStatus.Activated)
+                {
+                    return new LockDisposer(this, completion);
+                }
+
+                InternalCancelLock(completion);
+                throw new OperationCanceledException(cancellation);
+            }
+        }
+
+        private bool InternalTryLock(out IDisposable lockDisposer)
+        {
+            var completion = new TaskCompletionSource<LockStatus>();
+            completion.SetResult(LockStatus.Activated);
+
+            var prev = UpdateSubscribers(list =>
+            {
+                return list.Any() ? null : new[] {completion};
+            });
+
+            if (prev == null)
+            {
+                lockDisposer = null;
+                return false;
+            }
+
+            lockDisposer = new LockDisposer(this, completion);
+            return true;
+        }
+
+        #endregion
+
+        #region Public Methods
 
         /// <summary>
         /// 等待进入临界区
@@ -55,14 +222,12 @@ namespace MindLab.Threading
         /// <returns></returns>
         public async Task<IDisposable> LockAsync(CancellationToken cancellation = default)
         {
-            cancellation.ThrowIfCancellationRequested();
-            if (TryLock(out var lockDisposer))
+            if (TryLock(out var disposer))
             {
-                return lockDisposer;
+                return disposer;
             }
 
-            await m_semaphore.WaitAsync(cancellation);
-            return new SemaphoreReleaseOnce(m_semaphore);
+            return await InternalLock(cancellation);
         }
 
         /// <summary>
@@ -72,14 +237,8 @@ namespace MindLab.Threading
         /// <returns></returns>
         public bool TryLock(out IDisposable lockDisposer)
         {
-            if (!m_semaphore.Wait(0))
-            {
-                lockDisposer = null;
-                return false;
-            }
-
-            lockDisposer = new SemaphoreReleaseOnce(m_semaphore);
-            return true;
-        }
+            return InternalTryLock(out lockDisposer);
+        } 
+        #endregion
     }
 }

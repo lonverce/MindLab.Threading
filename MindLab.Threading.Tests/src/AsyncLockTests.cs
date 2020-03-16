@@ -12,10 +12,7 @@ namespace MindLab.Threading.Tests
             var locker = new AsyncLock();
             await locker.LockAsync();
 
-            var l2Task = locker.LockAsync();
-
-            await Task.Delay(100);
-            Assert.IsFalse(l2Task.IsCompleted);
+            Assert.IsFalse(locker.TryLock(out _));
         }
 
         [TestMethod]
