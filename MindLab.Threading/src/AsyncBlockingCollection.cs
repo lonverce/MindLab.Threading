@@ -20,6 +20,20 @@ namespace MindLab.Threading
         private readonly IProducerConsumerCollection<T> m_collection;
         #endregion
 
+        #region Properties
+
+        /// <summary>
+        /// 获取当前集合中的元素数量
+        /// </summary>
+        public int Count => m_fullSemaphoreSlim.CurrentCount;
+
+        /// <summary>
+        /// 获取集合容量, 如果没有设置最大容量, 则返回<c>int.MaxValue</c>
+        /// </summary>
+        public int BoundaryCapacity { get; }
+
+        #endregion
+
         #region Constructors
 
         /// <summary>
@@ -30,6 +44,7 @@ namespace MindLab.Threading
         {
             m_collection = collection ?? throw new ArgumentNullException(nameof(collection));
             m_fullSemaphoreSlim = new SemaphoreSlim(m_collection.Count);
+            BoundaryCapacity = int.MaxValue;
         }
 
         /// <summary>
@@ -51,6 +66,7 @@ namespace MindLab.Threading
             }
 
             m_emptySemaphoreSlim = new SemaphoreSlim(boundary - collection.Count, boundary);
+            BoundaryCapacity = boundary;
         }
 
         /// <summary>
