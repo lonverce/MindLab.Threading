@@ -1,15 +1,17 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFrameworks>netstandard2.1;netstandard2.0</TargetFrameworks>
     <Authors>lonverce</Authors>
     <Description>MindLab.Messaging is a light-weight library for providing message publish&amp;subscription in proc.</Description>
     <LangVersion>8</LangVersion>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <Version>1.0.0-alpha</Version>
   </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\MindLab.Threading\MindLab.Threading.csproj" />
   </ItemGroup>
-
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="1.1.0" Condition=" $(TargetFramework) == 'netstandard2.0' " />
+  </ItemGroup>
 </Project>

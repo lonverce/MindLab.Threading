@@ -13,6 +13,36 @@ namespace MindLab.Messaging
     {
         #region Fields
         private readonly AsyncBlockingCollection<TMessage> m_messageCollection;
+
+        /// <summary>
+        /// 队列默认容量
+        /// </summary>
+        public const int DEFAULT_CAPACITY = 8192;
+
+        /// <summary>
+        /// 队列默认行为
+        /// </summary>
+        public const QueueFullBehaviour DEFAULT_BEHAVIOUR = QueueFullBehaviour.BlockPublisher;
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// 获取队列最大容量
+        /// </summary>
+        public int Capacity => m_messageCollection.BoundaryCapacity;
+
+        /// <summary>
+        /// 获取队列中当前消息数量
+        /// </summary>
+        public int Count => m_messageCollection.Count;
+
+        /// <summary>
+        /// 获取当队列满载时的处理方式
+        /// </summary>
+        public QueueFullBehaviour FullBehaviour { get; }
+
         #endregion
 
         #region Constructor
@@ -21,15 +51,16 @@ namespace MindLab.Messaging
         /// 初始化消息队列
         /// </summary>
         public MessageQueue()
+            :this(DEFAULT_CAPACITY, DEFAULT_BEHAVIOUR)
         {
-            m_messageCollection = new AsyncBlockingCollection<TMessage>();
         }
 
         /// <summary>
         /// 初始化消息队列
         /// </summary>
         /// <param name="capacity">队列最大容量, 当队列满载时, 新消息的插入将导致旧消息被丢弃</param>
-        public MessageQueue(int capacity)
+        /// <param name="behaviour"></param>
+        public MessageQueue(int capacity, QueueFullBehaviour behaviour)
         {
             if (capacity <= 0)
             {
@@ -37,27 +68,41 @@ namespace MindLab.Messaging
             }
 
             m_messageCollection = new AsyncBlockingCollection<TMessage>(capacity);
+            FullBehaviour = behaviour;
         }
 
         #endregion
 
         #region Private Methods
         
-        private Task EnqueueMessageWithCapacity(string key, TMessage msg)
+        private async Task EnqueueMessageWithCapacity(string key, TMessage msg)
         {
             if (msg == null)
             {
-                return Task.CompletedTask;
+                return;
             }
 
+            if (m_messageCollection.TryAdd(msg) || FullBehaviour == QueueFullBehaviour.AbandonNew)
+            {
+                return;
+            }
+
+            if (FullBehaviour == QueueFullBehaviour.BlockPublisher)
+            {
+                await m_messageCollection.AddAsync(msg);
+                return;
+            }
+
+#if DEBUG
+            System.Diagnostics.Contracts.Contract.Assert(FullBehaviour == QueueFullBehaviour.RemoveOldest, 
+                "FullBehaviour should be QueueFullBehaviour.RemoveOldest");            
+#endif
             // 尝试获取空位, 不成功时进入循环体
             while (!(m_messageCollection.TryAdd(msg)))
             {
                 // 获取空位失败, 尝试移除队首元素
                 m_messageCollection.TryTake(out _);
             }
-
-            return Task.CompletedTask;
         }
 
         #endregion

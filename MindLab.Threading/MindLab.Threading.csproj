@@ -5,6 +5,7 @@
     <Authors>lonverce</Authors>
     <LangVersion>8</LangVersion>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <Version>1.0.0-alpha</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="1.1.0" Condition=" $(TargetFramework) == 'netstandard2.0' " />
