@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -155,6 +157,22 @@ namespace MindLab.Threading
             {
                 m_emptySemaphoreSlim?.Release();
             }
+        }
+
+        /// <summary>
+        /// 获取一个用于循环消费集合对象的异步枚举器
+        /// </summary>
+        /// <param name="cancellation"></param>
+        /// <returns></returns>
+        public async IAsyncEnumerable<T> GetConsumingEnumerable([EnumeratorCancellation]CancellationToken cancellation = default)
+        {
+            while (!cancellation.IsCancellationRequested)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var item = await TakeAsync(cancellation);
+                yield return item;
+            }
+            cancellation.ThrowIfCancellationRequested();
         }
 
         #endregion
