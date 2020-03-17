@@ -19,7 +19,7 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="cancellation"></param>
         /// <returns></returns>
-        public async Task<IDisposable> LockAsync(CancellationToken cancellation = default)
+        public async Task<IAsyncDisposable> LockAsync(CancellationToken cancellation = default)
         {
             cancellation.ThrowIfCancellationRequested();
             var completion = new TaskCompletionSource<LockStatus>();
@@ -74,7 +74,7 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="lockDisposer"></param>
         /// <returns></returns>
-        public bool TryLock(out IDisposable lockDisposer)
+        public bool TryLock(out IAsyncDisposable lockDisposer)
         {
             lockDisposer = null;
             if (!Monitor.TryEnter(m_locker))
@@ -102,7 +102,7 @@ namespace MindLab.Threading
             return true;
         }
 
-        void ILockDisposable.InternalUnlock()
+        Task ILockDisposable.InternalUnlockAsync()
         {
             TaskCompletionSource<LockStatus> next = null;
             lock (m_locker)
@@ -116,6 +116,7 @@ namespace MindLab.Threading
             }
 
             next?.TrySetResult(LockStatus.Activated);
+            return Task.CompletedTask;
         }
     }
 }

@@ -1,22 +1,14 @@
-﻿// =============================================
-// 版权归属 : RDAPP
-// 文件名称 : LockDisposer.cs
-// 文件作者 : 李垄华
-// 创建日期 : 2020-03-16
-// =============================================
-
-using System;
-using System.Diagnostics.Contracts;
+﻿using System;
 using System.Threading.Tasks;
 
 namespace MindLab.Threading.Internals
 {
     internal interface ILockDisposable
     {
-        void InternalUnlock();
+        Task InternalUnlockAsync();
     }
 
-    internal class LockDisposer : IDisposable
+    internal class LockDisposer : IAsyncDisposable
     {
         private readonly ILockDisposable m_locker;
         private readonly OnceFlag m_flag = new OnceFlag();
@@ -28,17 +20,17 @@ namespace MindLab.Threading.Internals
 
         ~LockDisposer()
         {
-            Dispose(false);
+            DisposeAsync(false).AsTask().Wait();
         }
 
-        private void Dispose(bool disposing)
+        private async ValueTask DisposeAsync(bool disposing)
         {
             if (!m_flag.TrySet())
             {
                 return;
             }
 
-            m_locker.InternalUnlock();
+            await m_locker.InternalUnlockAsync();
 
             if (disposing)
             {
@@ -46,9 +38,9 @@ namespace MindLab.Threading.Internals
             }
         }
 
-        public void Dispose()
+        public ValueTask DisposeAsync()
         {
-            Dispose(true);
+            return DisposeAsync(true);
         }
     }
 }

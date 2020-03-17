@@ -15,25 +15,26 @@ namespace MindLab.Threading
     /// 
     ///     public async Task IncreaseAsync(CancellationToken cancellation)
     ///     {
-    ///         using(await m_lock.LockAsync(cancellation))
+    ///         await using(await m_lock.LockAsync(cancellation))
     ///         {
     ///             m_value++;
     ///         }
     ///     }
     ///     
-    ///     public bool TryIncrease()
+    ///     public async Task<bool> TryIncrease()
     ///     {
     ///         if(!m_lock.TryLock(out var locker))
     ///         {
     ///             return false;
     ///         }
     ///         m_value++;
-    ///         locker.Dispose();
+    ///         await locker.DisposeAsync();
+    ///         return true;
     ///     }
     ///     
     ///     public async Task DecreaseAsync(CancellationToken cancellation)
     ///     {
-    ///         using(await m_lock.LockAsync(cancellation))
+    ///         await using(await m_lock.LockAsync(cancellation))
     ///         {
     ///             m_value--;
     ///         }
@@ -49,13 +50,13 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="cancellation"></param>
         /// <returns></returns>
-        Task<IDisposable> LockAsync(CancellationToken cancellation = default);
+        Task<IAsyncDisposable> LockAsync(CancellationToken cancellation = default);
 
         /// <summary>
         /// 尝试进入临界区
         /// </summary>
         /// <param name="lockDisposer"></param>
         /// <returns></returns>
-        bool TryLock(out IDisposable lockDisposer);
+        bool TryLock(out IAsyncDisposable lockDisposer);
     }
 }

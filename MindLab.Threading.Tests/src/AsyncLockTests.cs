@@ -31,7 +31,7 @@ namespace MindLab.Threading.Tests
             var locker = CreateLock(lockerType);
             var disposer = await locker.LockAsync();
             var l2Task = locker.LockAsync();
-            disposer.Dispose();
+            await disposer.DisposeAsync();
             Assert.IsTrue(l2Task.Wait(1000));
         }
 
@@ -40,7 +40,7 @@ namespace MindLab.Threading.Tests
         public async Task LockAsync_LockAgainWithCancel_OperationCancelled(Type lockerType)
         {
             var locker = CreateLock(lockerType);
-            using (await locker.LockAsync())
+            await using (await locker.LockAsync())
             {
                 using var tokenSrc = new CancellationTokenSource(TimeSpan.FromSeconds(1));
                 
@@ -59,7 +59,7 @@ namespace MindLab.Threading.Tests
             {
                 for (var i = 0; i < 1000; i++)
                 {
-                    using (await locker.LockAsync())
+                    await using (await locker.LockAsync())
                     {
                         value++;
                     } 

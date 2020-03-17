@@ -17,7 +17,7 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="cancellation"></param>
         /// <returns></returns>
-        public async Task<IDisposable> LockAsync(CancellationToken cancellation = default)
+        public async Task<IAsyncDisposable> LockAsync(CancellationToken cancellation = default)
         {
             await m_semaphore.WaitAsync(cancellation);
             return new LockDisposer(this);
@@ -28,7 +28,7 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="lockDisposer"></param>
         /// <returns></returns>
-        public bool TryLock(out IDisposable lockDisposer)
+        public bool TryLock(out IAsyncDisposable lockDisposer)
         {
             lockDisposer = null;
             if (!m_semaphore.Wait(0))
@@ -40,9 +40,15 @@ namespace MindLab.Threading
             return true;
         }
 
-        void ILockDisposable.InternalUnlock()
+        private void InternalUnlock()
         {
             m_semaphore.Release();
+        }
+
+        Task ILockDisposable.InternalUnlockAsync()
+        {
+            InternalUnlock();
+            return Task.CompletedTask;
         }
     }
 }

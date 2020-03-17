@@ -98,7 +98,7 @@ namespace MindLab.Threading
             }
         }
 
-        void ILockDisposable.InternalUnlock()
+        private void InternalUnlock()
         {
             var prevSubscribers = UpdateSubscribers(UpdateUnlock, null);
             if (prevSubscribers.Count > 1)
@@ -108,7 +108,13 @@ namespace MindLab.Threading
             }
         }
 
-        private async Task<IDisposable> InternalLock(CancellationToken cancellation)
+        Task ILockDisposable.InternalUnlockAsync()
+        {
+            InternalUnlock();
+            return Task.CompletedTask;
+        }
+
+        private async Task<IAsyncDisposable> InternalLock(CancellationToken cancellation)
         {
             var completion = new TaskCompletionSource<LockStatus>();
             var prevSubscribers = UpdateSubscribers(UpdateLock, completion, cancellation);
@@ -142,7 +148,7 @@ namespace MindLab.Threading
             ((TaskCompletionSource<LockStatus>)state).TrySetResult(LockStatus.Cancelled);
         }
 
-        private bool InternalTryLock(out IDisposable lockDisposer)
+        private bool InternalTryLock(out IAsyncDisposable lockDisposer)
         {
             var completion = new TaskCompletionSource<LockStatus>();
             completion.SetResult(LockStatus.Activated);
@@ -168,7 +174,7 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="cancellation"></param>
         /// <returns></returns>
-        public async Task<IDisposable> LockAsync(CancellationToken cancellation = default)
+        public async Task<IAsyncDisposable> LockAsync(CancellationToken cancellation = default)
         {
             if (TryLock(out var disposer))
             {
@@ -183,7 +189,7 @@ namespace MindLab.Threading
         /// </summary>
         /// <param name="lockDisposer"></param>
         /// <returns></returns>
-        public bool TryLock(out IDisposable lockDisposer)
+        public bool TryLock(out IAsyncDisposable lockDisposer)
         {
             return InternalTryLock(out lockDisposer);
         } 
