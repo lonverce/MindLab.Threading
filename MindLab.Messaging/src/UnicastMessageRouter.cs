@@ -79,7 +79,7 @@ namespace MindLab.Messaging
                 throw new ArgumentOutOfRangeException(nameof(messageHandler), "Can not be broadcast delegate");
             }
 
-            using (await m_lock.LockAsync(cancellation))
+            await using (await m_lock.LockAsync(cancellation))
             {
                 if (!m_subscribers.TryGetValue(key, out var handlers))
                 {
@@ -101,7 +101,7 @@ namespace MindLab.Messaging
 
         async Task ICallbackDisposable<TMessage>.DisposeCallback(string key, AsyncMessageHandler<TMessage> messageHandler)
         {
-            using (await m_lock.LockAsync())
+            await using (await m_lock.LockAsync())
             {
                 if (!m_subscribers.TryGetValue(key, out var existedHandlers))
                 {
