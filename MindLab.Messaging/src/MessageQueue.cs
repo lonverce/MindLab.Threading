@@ -1,7 +1,7 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using MindLab.Threading;
 
 namespace MindLab.Messaging
 {
@@ -12,8 +12,7 @@ namespace MindLab.Messaging
     public sealed class MessageQueue<TMessage>
     {
         #region Fields
-        private readonly SemaphoreSlim m_chatMessageSemaphore, m_blankSemaphore;
-        private readonly ConcurrentQueue<TMessage> m_chatMessages = new ConcurrentQueue<TMessage>();
+        private readonly AsyncBlockingCollection<TMessage> m_messageCollection;
         #endregion
 
         #region Constructor
@@ -23,8 +22,7 @@ namespace MindLab.Messaging
         /// </summary>
         public MessageQueue()
         {
-            m_chatMessageSemaphore = new SemaphoreSlim(0);
-            m_blankSemaphore = null;
+            m_messageCollection = new AsyncBlockingCollection<TMessage>();
         }
 
         /// <summary>
@@ -38,8 +36,7 @@ namespace MindLab.Messaging
                 throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "应该大于0");
             }
 
-            m_chatMessageSemaphore = new SemaphoreSlim(0, capacity);
-            m_blankSemaphore = new SemaphoreSlim(capacity, capacity);
+            m_messageCollection = new AsyncBlockingCollection<TMessage>(capacity);
         }
 
         #endregion
@@ -54,26 +51,13 @@ namespace MindLab.Messaging
             }
 
             // 尝试获取空位, 不成功时进入循环体
-            while (!(m_blankSemaphore?.Wait(0) ?? true))
+            while (!(m_messageCollection.TryAdd(msg)))
             {
                 // 获取空位失败, 尝试移除队首元素
-                TryTakeMessage(out _);
+                m_messageCollection.TryTake(out _);
             }
 
-            // 获取空位成功, 直接加入
-            m_chatMessages.Enqueue(msg);
-            m_chatMessageSemaphore.Release();
             return Task.CompletedTask;
-        }
-
-        private TMessage DequeueMessage()
-        {
-            if (!m_chatMessages.TryDequeue(out var msg))
-            {
-                throw new InvalidOperationException("Dequeue failed.");
-            }
-            m_blankSemaphore?.Release();
-            return msg;
         }
 
         #endregion
@@ -106,23 +90,7 @@ namespace MindLab.Messaging
         /// <returns></returns>
         public async Task<TMessage> TakeMessageAsync(CancellationToken token)
         {
-            await m_chatMessageSemaphore.WaitAsync(token);
-            return DequeueMessage();
-        }
-
-        /// <summary>
-        /// 等待队列中的下一条消息，如果在限时内没有获取到消息，则返回默认结果<paramref name="defaultValue"/>
-        /// </summary>
-        /// <param name="timeout">等待时限</param>
-        /// <param name="defaultValue">等待超时后返回的默认值</param>
-        public async Task<TMessage> TakeMessageOrDefaultAsync(TimeSpan timeout, TMessage defaultValue)
-        {
-            if (await m_chatMessageSemaphore.WaitAsync(timeout))
-            {
-                return DequeueMessage();
-            }
-
-            return defaultValue;
+            return await m_messageCollection.TakeAsync(token);
         }
 
         /// <summary>
@@ -132,14 +100,7 @@ namespace MindLab.Messaging
         /// <returns></returns>
         public bool TryTakeMessage(out TMessage message)
         {
-            message = default;
-            if (!m_chatMessageSemaphore.Wait(0))
-            {
-                return false;
-            }
-
-            message = DequeueMessage();
-            return true;
+            return m_messageCollection.TryTake(out message);
         }
 
         #endregion
