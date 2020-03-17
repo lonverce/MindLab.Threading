@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics.Contracts;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,155 +12,174 @@ namespace MindLab.Threading
     public class CasLock : IAsyncLock, ILockDisposable
     {
         #region Fields
-        private volatile IReadOnlyList<TaskCompletionSource<LockStatus>> m_subscribers 
-            = Array.Empty<TaskCompletionSource<LockStatus>>();
+
+        private readonly LinkedList<TaskCompletionSource<LockStatus>> m_subscriberList = new LinkedList<TaskCompletionSource<LockStatus>>();
+        private volatile int m_status;
+        private const int STA_FREE = 0, STA_BLOCKING = 1;
+        private static bool IsSingleProcessor { get; } = Environment.ProcessorCount == 1;
         #endregion
 
         #region Private Methods
 
-        private delegate IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateDelegate(
-            IReadOnlyList<TaskCompletionSource<LockStatus>> src, 
-            object state);
-
-        private IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateSubscribers(
-            UpdateDelegate updateFunc,
-            object state,
-            CancellationToken cancellation = default)
+        private async Task EnterLockAsync(CancellationToken cancellation)
         {
-            IReadOnlyList<TaskCompletionSource<LockStatus>> currentSubscribers;
-            IReadOnlyList<TaskCompletionSource<LockStatus>> prevSubscribers = m_subscribers;
+            const int YIELD_THRESHOLD = 10;
+            const int SLEEP_0_EVERY_HOW_MANY_TIMES = 5;
+            const int SLEEP_1_EVERY_HOW_MANY_TIMES = 20;
+
+            int count = 0;
 
             do
             {
                 cancellation.ThrowIfCancellationRequested();
-                currentSubscribers = prevSubscribers;
-
-                // copy on write
-                var nextVersionSubscribers = updateFunc(currentSubscribers, state);
-                if (nextVersionSubscribers == null)
+                if (Interlocked.CompareExchange(ref m_status, STA_BLOCKING, STA_FREE) != STA_FREE)
                 {
-                    return null;
+                    if (count > YIELD_THRESHOLD || IsSingleProcessor)
+                    {
+                        int yieldsSoFar = (count >= YIELD_THRESHOLD ? count - YIELD_THRESHOLD : count);
+
+                        if ((yieldsSoFar % SLEEP_1_EVERY_HOW_MANY_TIMES) == (SLEEP_1_EVERY_HOW_MANY_TIMES - 1))
+                        {
+                            await Task.Delay(1, cancellation);
+                        }
+                        else if ((yieldsSoFar % SLEEP_0_EVERY_HOW_MANY_TIMES) == (SLEEP_0_EVERY_HOW_MANY_TIMES - 1))
+                        {
+                            await Task.Delay(0, cancellation);
+                        }
+                        else
+                        {
+                            await Task.Yield();
+                        }
+                    }
+
+                    ++count;
                 }
-
-                prevSubscribers = Interlocked.CompareExchange(
-                    ref m_subscribers,
-                    nextVersionSubscribers,
-                    currentSubscribers);
-
-                Contract.Assert(prevSubscribers != null);
-            } while (!Equals(prevSubscribers, currentSubscribers));
-
-            return prevSubscribers;
+                else
+                {
+                    break;
+                }
+            } while (true);
         }
 
-        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateCancel(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
-            object state)
+        private bool TryEnterLock()
         {
-            return src.Where(source => source != state).ToArray();
+            return Interlocked.CompareExchange(ref m_status, STA_BLOCKING, STA_FREE) == STA_FREE;
         }
 
-        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateLock(IReadOnlyList<TaskCompletionSource<LockStatus>> list,
-            object state)
+        private void ExitLock()
         {
-            var src = (TaskCompletionSource<LockStatus>[])list;
-            var dest = new TaskCompletionSource<LockStatus>[src.Length + 1];
-            Array.Copy(src, 0, dest, 0, src.Length);
-            dest[src.Length] = (TaskCompletionSource<LockStatus>)state;
-            return dest;
+            m_status = STA_FREE;
         }
 
-        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateUnlock(IReadOnlyList<TaskCompletionSource<LockStatus>> sources,
-            object state)
+        async Task ILockDisposable.InternalUnlockAsync()
         {
-            var src = (TaskCompletionSource<LockStatus>[])sources;
-            var dest = new TaskCompletionSource<LockStatus>[src.Length - 1];
-            Array.Copy(src, 1, dest, 0, dest.Length);
-            return dest;
-        }
+            TaskCompletionSource<LockStatus> next = null;
+            await EnterLockAsync(CancellationToken.None);
 
-        private static IReadOnlyList<TaskCompletionSource<LockStatus>> UpdateTryLock(IReadOnlyList<TaskCompletionSource<LockStatus>> src,
-            object state)
-        {
-            return src.Any() ? null : (IReadOnlyList<TaskCompletionSource<LockStatus>>)state;
-        }
-
-        private void InternalCancelLock(TaskCompletionSource<LockStatus> completion)
-        {
-            Contract.Assert(completion.Task.IsCompleted && completion.Task.Result == LockStatus.Cancelled);
-            var prevSubscribers = UpdateSubscribers(
-                UpdateCancel, completion);
-            
-            if (prevSubscribers[0] == completion && prevSubscribers.Count > 1)
+            try
             {
-                // 触发下一个锁
-                prevSubscribers[1].TrySetResult(LockStatus.Activated);
-            }
-        }
+                m_subscriberList.RemoveFirst();
 
-        private void InternalUnlock()
-        {
-            var prevSubscribers = UpdateSubscribers(UpdateUnlock, null);
-            if (prevSubscribers.Count > 1)
+                if (m_subscriberList.Any())
+                {
+                    next = m_subscriberList.First.Value;
+                }
+            }
+            finally
             {
-                // 触发下一个锁
-                prevSubscribers[1].TrySetResult(LockStatus.Activated);
+                ExitLock();
             }
-        }
 
-        Task ILockDisposable.InternalUnlockAsync()
-        {
-            InternalUnlock();
-            return Task.CompletedTask;
+            next?.TrySetResult(LockStatus.Activated);
         }
 
         private async Task<IAsyncDisposable> InternalLock(CancellationToken cancellation)
         {
+            cancellation.ThrowIfCancellationRequested();
             var completion = new TaskCompletionSource<LockStatus>();
-            var prevSubscribers = UpdateSubscribers(UpdateLock, completion, cancellation);
+            var isFirst = false;
 
-            // 如果当前没有其他等候者, 则表示我们成功进入临界区; 否则, 表示我们进入等候区
-            if (prevSubscribers.Count == 0)
+            await EnterLockAsync(cancellation);
+
+            try
             {
-                completion.TrySetResult(LockStatus.Activated);
+                cancellation.ThrowIfCancellationRequested();
+                m_subscriberList.AddLast(completion);
+                if (m_subscriberList.Count == 1)
+                {
+                    isFirst = true;
+                }
+            }
+            finally
+            {
+                ExitLock();
             }
 
-            await using (cancellation.Register(CancelCompletion, completion, false))
+            if (isFirst)
+            {
+                completion.SetResult(LockStatus.Activated);
+            }
+
+            await using (cancellation.Register(() => completion.TrySetResult(LockStatus.Cancelled)))
             {
                 if (cancellation.IsCancellationRequested)
                 {
                     completion.TrySetResult(LockStatus.Cancelled);
                 }
 
-                var result = await completion.Task;
-                if (result == LockStatus.Activated)
+                var status = await completion.Task;
+                if (status == LockStatus.Activated)
                 {
                     return new LockDisposer(this);
                 }
 
-                InternalCancelLock(completion);
+                TaskCompletionSource<LockStatus> next = null;
+
+                await EnterLockAsync(CancellationToken.None);
+                try
+                {
+                    var activateNext = m_subscriberList.First.Value == completion;
+                    m_subscriberList.Remove(completion);
+                    if (activateNext)
+                    {
+                        next = m_subscriberList.First.Value;
+                    }
+                }
+                finally
+                {
+                    ExitLock();
+                }
+
+                next?.TrySetResult(LockStatus.Activated);
                 throw new OperationCanceledException(cancellation);
             }
         }
 
-        private static void CancelCompletion(object state)
-        {
-            ((TaskCompletionSource<LockStatus>)state).TrySetResult(LockStatus.Cancelled);
-        }
-
         private bool InternalTryLock(out IAsyncDisposable lockDisposer)
         {
-            var completion = new TaskCompletionSource<LockStatus>();
-            completion.SetResult(LockStatus.Activated);
-            var cps = new[] { completion };
-            var prev = UpdateSubscribers(UpdateTryLock, cps);
-
-            if (prev == null)
+            lockDisposer = null;
+            if (!TryEnterLock())
             {
-                lockDisposer = null;
                 return false;
             }
 
-            lockDisposer = new LockDisposer(this);
+            try
+            {
+                if (m_subscriberList.Any())
+                {
+                    return false;
+                }
+
+                var completion = new TaskCompletionSource<LockStatus>();
+                completion.SetResult(LockStatus.Activated);
+                m_subscriberList.AddFirst(completion);
+                lockDisposer = new LockDisposer(this);
+            }
+            finally
+            {
+                ExitLock();
+            }
+
             return true;
         }
 
