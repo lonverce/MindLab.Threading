@@ -12,7 +12,7 @@ namespace MindLab.Messaging
     public sealed class MessageQueue<TMessage>
     {
         #region Fields
-        private readonly AsyncBlockingCollection<TMessage> m_messageCollection;
+        private readonly AsyncBlockingCollection<MessageArgs<TMessage>> m_messageCollection;
 
         /// <summary>
         /// 队列默认容量
@@ -67,7 +67,7 @@ namespace MindLab.Messaging
                 throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "应该大于0");
             }
 
-            m_messageCollection = new AsyncBlockingCollection<TMessage>(capacity);
+            m_messageCollection = new AsyncBlockingCollection<MessageArgs<TMessage>>(capacity);
             FullBehaviour = behaviour;
         }
 
@@ -75,12 +75,20 @@ namespace MindLab.Messaging
 
         #region Private Methods
         
-        private async Task EnqueueMessageWithCapacity(string key, TMessage msg)
+        private async Task EnqueueMessageWithCapacity(string publishKey,string bindingKey, IMessageRouter<TMessage> router, TMessage payload)
         {
-            if (msg == null)
+            if (payload == null)
             {
                 return;
             }
+
+            var msg = new MessageArgs<TMessage>()
+            {
+                Payload = payload,
+                BindingKey = bindingKey,
+                PublishKey = publishKey,
+                FromRouter = router
+            };
 
             if (m_messageCollection.TryAdd(msg) || FullBehaviour == QueueFullBehaviour.AbandonNew)
             {
@@ -125,7 +133,10 @@ namespace MindLab.Messaging
                 throw new ArgumentNullException(nameof(messageRouter));
             }
 
-            return await messageRouter.RegisterCallbackAsync(key, EnqueueMessageWithCapacity, cancellation);
+            return await messageRouter.RegisterCallbackAsync(key, 
+                (publishKey, payload) 
+                => EnqueueMessageWithCapacity(publishKey, key, messageRouter, payload), 
+                cancellation);
         }
 
         /// <summary>
@@ -133,7 +144,7 @@ namespace MindLab.Messaging
         /// </summary>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<TMessage> TakeMessageAsync(CancellationToken token)
+        public async Task<MessageArgs<TMessage>> TakeMessageAsync(CancellationToken token)
         {
             return await m_messageCollection.TakeAsync(token);
         }
@@ -143,7 +154,7 @@ namespace MindLab.Messaging
         /// </summary>
         /// <param name="message"></param>
         /// <returns></returns>
-        public bool TryTakeMessage(out TMessage message)
+        public bool TryTakeMessage(out MessageArgs<TMessage> message)
         {
             return m_messageCollection.TryTake(out message);
         }
