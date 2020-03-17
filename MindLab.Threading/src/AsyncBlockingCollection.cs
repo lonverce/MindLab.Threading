@@ -2,7 +2,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -178,17 +177,85 @@ namespace MindLab.Threading
         /// <summary>
         /// 获取一个用于循环消费集合对象的异步枚举器
         /// </summary>
-        /// <param name="cancellation"></param>
-        /// <returns></returns>
-        public async IAsyncEnumerable<T> GetConsumingEnumerable([EnumeratorCancellation]CancellationToken cancellation = default)
+        public IAsyncEnumerable<T> GetConsumingEnumerable()
         {
-            while (!cancellation.IsCancellationRequested)
+            return new ConsumingEnumerable(this);
+        }
+
+        #endregion
+
+        #region Enumerable
+
+        /// <summary>
+        /// 枚举器
+        /// </summary>
+        public class ConsumingEnumerable : IAsyncEnumerable<T>
+        {
+            private readonly AsyncBlockingCollection<T> m_collection;
+
+            /// <summary>
+            /// 创建枚举器
+            /// </summary>
+            /// <param name="collection"></param>
+            public ConsumingEnumerable(AsyncBlockingCollection<T> collection)
             {
-                cancellation.ThrowIfCancellationRequested();
-                var item = await TakeAsync(cancellation);
-                yield return item;
+                m_collection = collection ?? throw new ArgumentNullException(nameof(collection));
             }
-            cancellation.ThrowIfCancellationRequested();
+
+            /// <summary>Returns an enumerator that iterates asynchronously through the collection.</summary>
+            /// <param name="cancellationToken">A <see cref="T:System.Threading.CancellationToken" /> that may be used
+            /// to cancel the asynchronous iteration.</param>
+            /// <returns>An enumerator that can be used to iterate asynchronously through the collection.</returns>
+            public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = new CancellationToken())
+            {
+                return new ConsumingEnumerator(m_collection, cancellationToken);
+            }
+        }
+
+        private class ConsumingEnumerator : IAsyncEnumerator<T>
+        {
+            private readonly AsyncBlockingCollection<T> m_collection;
+            private readonly CancellationTokenSource m_disposeToken;
+            private int m_status = STA_FREE;
+            private const int STA_FREE = 0, STA_WORKING = 1;
+
+            public ConsumingEnumerator(AsyncBlockingCollection<T> collection, CancellationToken cancellation)
+            {
+                m_collection = collection;
+                m_disposeToken = cancellation.CanBeCanceled ? CancellationTokenSource.CreateLinkedTokenSource(cancellation) 
+                    : new CancellationTokenSource();
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                m_disposeToken.Cancel();
+                await Task.CompletedTask;
+            }
+
+            public async ValueTask<bool> MoveNextAsync()
+            {
+                if (m_disposeToken.IsCancellationRequested)
+                {
+                    throw new ObjectDisposedException(GetType().FullName);
+                }
+
+                if (Interlocked.CompareExchange(ref m_status, STA_WORKING, STA_FREE) != STA_FREE)
+                {
+                    throw new InvalidOperationException("Don't call MoveNextAsync in parallel");
+                }
+
+                try
+                {
+                    Current = await m_collection.TakeAsync(m_disposeToken.Token);
+                    return true;
+                }
+                finally
+                {
+                    m_status = STA_FREE;
+                }
+            }
+
+            public T Current { get; private set; }
         }
 
         #endregion
