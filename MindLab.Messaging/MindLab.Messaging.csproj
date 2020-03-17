@@ -7,6 +7,7 @@
     <LangVersion>8</LangVersion>
     <GenerateDocumentationFile>True</GenerateDocumentationFile>
     <Version>1.0.0-alpha</Version>
+    <PackageProjectUrl>https://github.com/lonverce/mind-lab</PackageProjectUrl>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MindLab.Threading\MindLab.Threading.csproj" />
