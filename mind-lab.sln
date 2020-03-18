@@ -9,7 +9,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{ECD22F3C
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MindLab.Threading", "MindLab.Threading\MindLab.Threading.csproj", "{700AB118-553A-4BC7-AE11-FC15A00221D3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MindLab.Threading.Tests", "MindLab.Threading.Tests\MindLab.Threading.Tests.csproj", "{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MindLab.Threading.Tests", "MindLab.Threading.Tests\MindLab.Threading.Tests.csproj", "{AA082011-A96C-4B4E-BD7D-D10C0EE86FC6}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{36FF9DFE-5A3A-4B40-B3CA-AA614B9A4B68}"
+	ProjectSection(SolutionItems) = preProject
+		LICENSE = LICENSE
+		README.md = README.md
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
