@@ -8,21 +8,24 @@ using Telerik.JustMock;
 namespace MindLab.Messaging.Tests
 {
     [TestFixture]
-    public class BroadcastMessageRouterTests
+    public class UnicastMessageRouterTests
     {
         [Test]
-        public async Task PublishMessageAfterRegister_CallbackSucceed()
+        [TestCase("1", "1", true)]
+        [TestCase("1", "2", false)]
+        public async Task PublishMessageAfterRegister_CallbackSucceed(string bindingKey, string publishKey, bool shouldBeReceived)
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>(); 
+            var router = new UnicastMessageRouter<int>();
             var cb = Mock.Create<AsyncMessageHandler<int>>();
-            var key = string.Empty;
+            var key = bindingKey;
             var message = 15;
 
             Mock.Arrange(() => cb(Arg.IsAny<MessageArgs<int>>()))
                 .Returns(Task.CompletedTask)
-                .MustBeCalled();
-            await router.RegisterCallbackAsync(new Registration<int>(string.Empty, cb), CancellationToken.None);
+                .Occurs(shouldBeReceived ? 1:0);
+
+            await router.RegisterCallbackAsync(new Registration<int>(publishKey, cb), CancellationToken.None);
 
             // Act
             await router.PublishMessageAsync(key, message);
@@ -32,29 +35,41 @@ namespace MindLab.Messaging.Tests
         }
 
         [Test]
-        public async Task PublishMessageAfterRegister_OneReceiver()
+        [TestCase(1)]
+        [TestCase(10)]
+        [TestCase(100)]
+        public async Task PublishMessageAfterRegister_RegisterMultipleTimes_ReceiverCountAsMuchAsRegisterTimes(int regTimes)
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var key = string.Empty;
             var message = 15;
-            await router.RegisterCallbackAsync(
-                new Registration<int>(string.Empty, args => Task.CompletedTask), 
-                CancellationToken.None);
+            var randomValue = new Random(regTimes);
+
+            for (int i = 0; i < regTimes; i++)
+            {
+                var val = randomValue.Next();
+                await router.RegisterCallbackAsync(
+                    new Registration<int>(string.Empty, args =>
+                    {
+                        val++;
+                        return Task.CompletedTask;
+                    }),
+                    CancellationToken.None); 
+            }
 
             // Act
             var result = await router.PublishMessageAsync(key, message);
 
             // Assert
-            Assert.AreEqual(1, result.ReceiverCount);
-            Assert.IsNull(result.Exception);
+            Assert.AreEqual(regTimes, result.ReceiverCount);
         }
 
         [Test]
         public async Task PublishMessageAfterRegister_NoException()
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var key = string.Empty;
             var message = 15;
             await router.RegisterCallbackAsync(
@@ -72,7 +87,7 @@ namespace MindLab.Messaging.Tests
         public async Task PublishMessageAfterRegister_HandlerThrowException_ResultContainException()
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var key = string.Empty;
             var message = 15;
             await router.RegisterCallbackAsync(
@@ -87,32 +102,10 @@ namespace MindLab.Messaging.Tests
         }
 
         [Test]
-        public async Task RegisterSameActionTwice_CallbackOnlyOnce()
-        {
-            // Arrange
-            var router = new BroadcastMessageRouter<int>(); 
-            var cb = Mock.Create<AsyncMessageHandler<int>>();
-            var key = string.Empty;
-            var message = 15;
-
-            Mock.Arrange(() => cb(Arg.IsAny<MessageArgs<int>>()))
-                .Returns(Task.CompletedTask)
-                .Occurs(1);
-
-            // Act
-            await router.RegisterCallbackAsync(new Registration<int>("1", cb), CancellationToken.None);
-            await router.RegisterCallbackAsync(new Registration<int>("2", cb), CancellationToken.None); // register twice
-            await router.PublishMessageAsync(key, message);
-
-            // Assert
-            Mock.Assert(cb);
-        }
-
-        [Test]
         public async Task RegisterSameActionAndKeyTwice_ExceptionThrown()
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var cb = Mock.Create<AsyncMessageHandler<int>>();
             var key = string.Empty;
 
@@ -128,7 +121,7 @@ namespace MindLab.Messaging.Tests
         public async Task PublishMessage_FirstHandlerThrow_SecondHandlerInvoked()
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var cb = Mock.Create<AsyncMessageHandler<int>>();
             var key = string.Empty;
             var message = 15;
@@ -136,9 +129,10 @@ namespace MindLab.Messaging.Tests
             Mock.Arrange(() => cb(Arg.IsAny<MessageArgs<int>>()))
                 .Returns(Task.CompletedTask)
                 .Occurs(1);
-            await router.RegisterCallbackAsync(new Registration<int>("1", args => Task.FromException(new Exception())), 
+
+            await router.RegisterCallbackAsync(new Registration<int>(key, args => Task.FromException(new Exception())),
                 CancellationToken.None);
-            await router.RegisterCallbackAsync(new Registration<int>("2", cb), CancellationToken.None); // register twice
+            await router.RegisterCallbackAsync(new Registration<int>(key, cb), CancellationToken.None); // register twice
 
             // Act
             await router.PublishMessageAsync(key, message);
@@ -151,7 +145,7 @@ namespace MindLab.Messaging.Tests
         public async Task PublishAfterDispose_NoCallback()
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var cb = Mock.Create<AsyncMessageHandler<int>>();
 
             Mock.Arrange(() => cb(Arg.IsAny<MessageArgs<int>>()))
@@ -172,46 +166,17 @@ namespace MindLab.Messaging.Tests
         }
 
         [Test]
-        public async Task PublishMessage_AllSubscribersReceived()
-        {
-            // Arrange
-            var router = new BroadcastMessageRouter<int>();
-            var cb = Mock.Create<AsyncMessageHandler<int>>();
-            var cb2 = Mock.Create<AsyncMessageHandler<int>>();
-            var key = string.Empty;
-            var message = 15;
-
-            Mock.Arrange(() => cb(Arg.IsAny<MessageArgs<int>>()))
-                .Returns(Task.CompletedTask)
-                .Occurs(1);
-            Mock.Arrange(() => cb2(Arg.IsAny<MessageArgs<int>>()))
-                .Returns(Task.CompletedTask)
-                .Occurs(1);
-
-            await router.RegisterCallbackAsync(new Registration<int>("1", cb), CancellationToken.None);
-            await router.RegisterCallbackAsync(new Registration<int>("2", cb2), CancellationToken.None);
-
-            // Act
-            await router.PublishMessageAsync(key, message);
-
-            // Assert
-            Mock.Assert(cb);
-            Mock.Assert(cb2);
-        }
-
-        [Test]
-        [TestCase("123", "456", 789)]
-        [TestCase("", "456", 789)]
-        [TestCase("123", "", 789)]
-        public async Task PublishMessage_MessageArgCorrect(string bindKey, string publishKey, int message)
+        [TestCase("123", 789)]
+        [TestCase("", 789)]
+        public async Task PublishMessage_MessageArgCorrect(string bindKey, int message)
         {
             // Arrange
             var router = new BroadcastMessageRouter<int>();
 
             Task Callback(MessageArgs<int> args)
             {
-                Assert.IsTrue(args.BindingKey.Contains(bindKey));
-                Assert.AreEqual(publishKey, args.PublishKey);
+                Assert.IsTrue(args.BindingKey.Single() == bindKey);
+                Assert.AreEqual(bindKey, args.PublishKey);
                 Assert.AreSame(router, args.FromRouter);
                 Assert.AreEqual(message, args.Payload);
 
@@ -219,7 +184,7 @@ namespace MindLab.Messaging.Tests
             }
 
             await router.RegisterCallbackAsync(new Registration<int>(bindKey, Callback));
-            await router.PublishMessageAsync(publishKey, message);
+            await router.PublishMessageAsync(bindKey, message);
         }
 
         [Test]
@@ -229,7 +194,7 @@ namespace MindLab.Messaging.Tests
         public async Task PublishMessage_BindInMultipleThreads_TotalCallback(int times)
         {
             // Arrange
-            var router = new BroadcastMessageRouter<int>();
+            var router = new UnicastMessageRouter<int>();
             var cb = Mock.Create<AsyncMessageHandler<int>>();
 
             Mock.Arrange(() => cb(Arg.IsAny<MessageArgs<int>>()))
@@ -241,7 +206,7 @@ namespace MindLab.Messaging.Tests
 
             var bindTask = Task.Run(async () =>
             {
-                var reg = new Registration<int>("1", args => Task.CompletedTask);
+                var reg = new Registration<int>(string.Empty, args => Task.CompletedTask);
 
                 while (!cancellationTokenSrc.IsCancellationRequested)
                 {

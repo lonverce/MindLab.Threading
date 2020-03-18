@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Linq;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MindLab.Threading;
@@ -19,8 +19,8 @@ namespace MindLab.Messaging
         #region Fields
         
         private readonly IAsyncLock m_lock = new MonitorLock();
-        private readonly ConcurrentDictionary<string, Registration<TMessage>[]> m_subscribers 
-            = new ConcurrentDictionary<string, Registration<TMessage>[]>(StringComparer.CurrentCultureIgnoreCase);
+        private readonly ConcurrentDictionary<string, HashSet<Registration<TMessage>>> m_subscribers 
+            = new ConcurrentDictionary<string, HashSet<Registration<TMessage>>>(StringComparer.CurrentCultureIgnoreCase);
 
         #endregion
 
@@ -49,7 +49,7 @@ namespace MindLab.Messaging
                 return MessagePublishResult.None;
             }
 
-            return await handlers.InvokeHandlers(this, key, message);
+            return await handlers.InvokeHandlersDirectly(this, key, message);
         }
 
         /// <summary>
@@ -69,12 +69,29 @@ namespace MindLab.Messaging
                 throw new ArgumentNullException(nameof(registration));
             }
 
+            bool ok = true;
+
             await using (await m_lock.LockAsync(cancellation))
             {
-                m_subscribers.AddOrUpdate(registration.RegisterKey, key => new[]{registration},
-                    (key, registrations) => registrations.Append(registration).ToArray());
+                m_subscribers.AddOrUpdate(registration.RegisterKey, 
+                    key => new HashSet<Registration<TMessage>>(new[]{registration}),
+                    (key, registrations) =>
+                    {
+                        if (!registrations.Contains(registration))
+                        {
+                            return new HashSet<Registration<TMessage>>(registrations) {registration};
+                        }
+
+                        ok = false;
+                        return registrations;
+                    });
             }
-            
+
+            if (!ok)
+            {
+                throw new InvalidOperationException("Don't register again !");
+            }
+
             return new CallbackDisposer<TMessage>(this, registration);
         }
 
@@ -91,19 +108,20 @@ namespace MindLab.Messaging
                     return;
                 }
 
-                var list = existedHandlers.ToList();
-                if (!list.Remove(registration))
+                if (!existedHandlers.Contains(registration))
                 {
                     return;
                 }
 
-                if (list.Count == 0)
+                if (existedHandlers.Count == 0)
                 {
                     m_subscribers.TryRemove(registration.RegisterKey, out _);
                     return;
                 }
 
-                m_subscribers[registration.RegisterKey] = list.ToArray();
+                existedHandlers = new HashSet<Registration<TMessage>>(existedHandlers);
+                existedHandlers.Remove(registration);
+                m_subscribers[registration.RegisterKey] = existedHandlers;
             }
         }
 
