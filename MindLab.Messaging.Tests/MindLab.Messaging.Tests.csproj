@@ -1,12 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netcoreapp3.1</TargetFramework>
-    <LangVersion>8</LangVersion>
+
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="JustMock" Version="2020.1.113.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.2.0" />
     <PackageReference Include="coverlet.collector" Version="1.0.1" />
     <PackageReference Include="NUnit" Version="3.12.0" />
@@ -17,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MindLab.Threading\MindLab.Threading.csproj" />
+    <ProjectReference Include="..\MindLab.Messaging\MindLab.Messaging.csproj" />
   </ItemGroup>
 
 </Project>

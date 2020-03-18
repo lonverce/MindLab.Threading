@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,42 +14,36 @@ namespace MindLab.Messaging
     public class BroadcastMessageRouter<TMessage> : IMessageRouter<TMessage>,
         IMessagePublisher<TMessage>, ICallbackDisposable<TMessage>
     {
-        private volatile AsyncMessageHandler<TMessage>[] m_handlers = Array.Empty<AsyncMessageHandler<TMessage>>();
+        private volatile HashSet<Registration<TMessage>> m_handlers = new HashSet<Registration<TMessage>>(
+            EqualityComparer<Registration<TMessage>>.Default);
         private readonly IAsyncLock m_lock = new MonitorLock();
 
         /// <summary>
-        /// 订阅注册指定<paramref name="key"/>关联的回调处理
+        /// 订阅注册回调
         /// </summary>
-        /// <param name="key"></param>
-        /// <param name="messageHandler"></param>
+        /// <param name="registration"></param>
         /// <param name="cancellation"></param>
         /// <returns>通过此对象取消订阅</returns>
         /// <exception cref="ArgumentNullException">
-        ///     <paramref name="messageHandler"/>为空 或 <paramref name="key"/>为空
+        ///     <paramref name="registration"/>为空
         /// </exception>
         public async Task<IAsyncDisposable> RegisterCallbackAsync(
-            string key, AsyncMessageHandler<TMessage> messageHandler, CancellationToken cancellation)
+            Registration<TMessage> registration, CancellationToken cancellation = default)
         {
-            if (string.IsNullOrEmpty(key))
+            if (registration == null)
             {
-                throw new ArgumentNullException(nameof(key));
-            }
-
-            if (messageHandler == null)
-            {
-                throw new ArgumentNullException(nameof(messageHandler));
-            }
-
-            if (messageHandler.GetInvocationList().Length > 1)
-            {
-                throw new ArgumentOutOfRangeException(nameof(messageHandler), "Can not be broadcast delegate");
+                throw new ArgumentNullException(nameof(registration));
             }
 
             await using (await m_lock.LockAsync(cancellation))
             {
-                var handlers = m_handlers;
-                m_handlers = handlers.Append(messageHandler).ToArray();
-                return new CallbackDisposer<TMessage>(this, key, messageHandler);
+                if (m_handlers.Contains(registration))
+                {
+                    throw new InvalidOperationException("Don't register again !");
+                }
+
+                m_handlers = new HashSet<Registration<TMessage>>(m_handlers.Append(registration));
+                return new CallbackDisposer<TMessage>(this, registration);
             }
         }
 
@@ -64,34 +59,34 @@ namespace MindLab.Messaging
             {
                 throw new ArgumentNullException(nameof(message));
             }
-            if (string.IsNullOrEmpty(key))
+            if (key == null)
             {
                 throw new ArgumentNullException(nameof(key));
             }
 
             var handlers = m_handlers;
 
-            if (handlers.Length == 0)
+            if (handlers.Count == 0)
             {
                 return MessagePublishResult.None;
             }
 
-            return await handlers.InvokeHandlers(key, message);
+            return await handlers.InvokeHandlers(this, key, message);
         }
 
-        async Task ICallbackDisposable<TMessage>.DisposeCallback(string key, AsyncMessageHandler<TMessage> messageHandler)
+        async Task ICallbackDisposable<TMessage>.DisposeCallback(Registration<TMessage> registration)
         {
             await using (await m_lock.LockAsync())
             {
                 var handlers = m_handlers;
-
-                var list = handlers.ToList();
-                if (!list.Remove(messageHandler))
+                if (!handlers.Contains(registration))
                 {
                     return;
                 }
 
-                m_handlers = list.ToArray();
+                handlers = new HashSet<Registration<TMessage>>(m_handlers);
+                handlers.Remove(registration);
+                m_handlers = handlers;
             }
         }
     }

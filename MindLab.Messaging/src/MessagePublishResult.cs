@@ -15,7 +15,7 @@ namespace MindLab.Messaging
         /// <summary>
         /// 每个订阅者接收到此消息时产生的异常，如果没有异常，则为null
         /// </summary>
-        public AggregateException Exception;
+        public Exception Exception;
 
         /// <summary>
         /// 表示无异常且无消费的发布结果

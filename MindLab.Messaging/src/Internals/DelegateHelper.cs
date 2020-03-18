@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -8,7 +9,8 @@ namespace MindLab.Messaging.Internals
     internal static class DelegateHelper
     {
         public static async Task<MessagePublishResult> InvokeHandlers<TMessage>(
-            this IReadOnlyCollection<AsyncMessageHandler<TMessage>> handlers,
+            this IReadOnlyCollection<Registration<TMessage>> handlers,
+            IMessageRouter<TMessage> router,
             string key,
             TMessage message
             )
@@ -25,9 +27,26 @@ namespace MindLab.Messaging.Internals
 
             try
             {
-                await Task.WhenAll(handlers.Distinct().Select(handler => handler(key, message)).ToArray());
+                var subscribers = handlers
+                    .GroupBy(registration => registration.Handler)
+                    .Select(grouping =>
+                    {
+                        var func = grouping.Key;
+                        var bindings = grouping.Select(registration => registration.RegisterKey)
+                            .ToArray();
+                        var msgArgs = new MessageArgs<TMessage>(
+                            router, key, 
+                            new ReadOnlyCollection<string>(bindings), 
+                            message);
+
+                        return Task.Run(() => func(msgArgs));
+                    })
+                    .ToArray();
+
+                result.ReceiverCount = (uint)subscribers.Length;
+                await Task.WhenAll(subscribers);
             }
-            catch (AggregateException e)
+            catch (Exception e)
             {
                 result.Exception = e;
             }

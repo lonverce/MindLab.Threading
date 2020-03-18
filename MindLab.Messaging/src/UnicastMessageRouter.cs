@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,27 +19,27 @@ namespace MindLab.Messaging
         #region Fields
         
         private readonly IAsyncLock m_lock = new MonitorLock();
-        private readonly Dictionary<string, AsyncMessageHandler<TMessage>[]> m_subscribers 
-            = new Dictionary<string, AsyncMessageHandler<TMessage>[]>(StringComparer.CurrentCultureIgnoreCase);
+        private readonly ConcurrentDictionary<string, Registration<TMessage>[]> m_subscribers 
+            = new ConcurrentDictionary<string, Registration<TMessage>[]>(StringComparer.CurrentCultureIgnoreCase);
 
         #endregion
 
         #region Public Methods
 
         /// <summary>
-        /// 向使用指定<paramref name="key"/>注册的订阅者发布消息
+        /// 向使用指定路由键<paramref name="key"/>注册的订阅者发布消息
         /// </summary>
         /// <param name="key">路由key</param>
         /// <param name="message">消息对象</param>
-        /// <returns>发布的消息数量</returns>
-        /// <exception cref="ArgumentNullException"><paramref name="message"/>为空 或 <paramref name="key"/>为空</exception>
+        /// <exception cref="ArgumentNullException"><paramref name="message"/>为空</exception>
         public async Task<MessagePublishResult> PublishMessageAsync(string key, TMessage message)
         {
             if (message == null)
             {
                 throw new ArgumentNullException(nameof(message));
             }
-            if (string.IsNullOrEmpty(key))
+
+            if (key == null)
             {
                 throw new ArgumentNullException(nameof(key));
             }
@@ -49,78 +49,61 @@ namespace MindLab.Messaging
                 return MessagePublishResult.None;
             }
 
-            return await handlers.InvokeHandlers(key, message);
+            return await handlers.InvokeHandlers(this, key, message);
         }
 
         /// <summary>
-        /// 订阅注册指定<paramref name="key"/>关联的回调处理
+        /// 订阅注册回调
         /// </summary>
-        /// <param name="key"></param>
-        /// <param name="messageHandler"></param>
+        /// <param name="registration"></param>
         /// <param name="cancellation"></param>
         /// <returns>通过此对象取消订阅</returns>
-        /// <exception cref="ArgumentNullException"><paramref name="messageHandler"/>为空 或 <paramref name="key"/>为空</exception>
-        public async Task<IAsyncDisposable> RegisterCallbackAsync(string key, 
-            AsyncMessageHandler<TMessage> messageHandler,
+        /// <exception cref="ArgumentNullException">
+        ///     <paramref name="registration"/>为空
+        /// </exception>
+        public async Task<IAsyncDisposable> RegisterCallbackAsync(Registration<TMessage> registration,
             CancellationToken cancellation = default)
         {
-            if (string.IsNullOrEmpty(key))
+            if (registration == null)
             {
-                throw new ArgumentNullException(nameof(key));
-            }
-
-            if (messageHandler == null)
-            {
-                throw new ArgumentNullException(nameof(messageHandler));
-            }
-
-            if (messageHandler.GetInvocationList().Length > 1)
-            {
-                throw new ArgumentOutOfRangeException(nameof(messageHandler), "Can not be broadcast delegate");
+                throw new ArgumentNullException(nameof(registration));
             }
 
             await using (await m_lock.LockAsync(cancellation))
             {
-                if (!m_subscribers.TryGetValue(key, out var handlers))
-                {
-                    m_subscribers.Add(key, new[] { messageHandler });
-                }
-                else
-                {
-                    // copy on write
-                    m_subscribers[key] = handlers.Append(messageHandler).ToArray();
-                }
+                m_subscribers.AddOrUpdate(registration.RegisterKey, key => new[]{registration},
+                    (key, registrations) => registrations.Append(registration).ToArray());
             }
             
-            return new CallbackDisposer<TMessage>(this, key, messageHandler);
+            return new CallbackDisposer<TMessage>(this, registration);
         }
 
         #endregion
 
         #region Private
 
-        async Task ICallbackDisposable<TMessage>.DisposeCallback(string key, AsyncMessageHandler<TMessage> messageHandler)
+        async Task ICallbackDisposable<TMessage>.DisposeCallback(Registration<TMessage> registration)
         {
             await using (await m_lock.LockAsync())
             {
-                if (!m_subscribers.TryGetValue(key, out var existedHandlers))
+                if (!m_subscribers.TryGetValue(registration.RegisterKey, out var existedHandlers))
                 {
                     return;
                 }
 
                 var list = existedHandlers.ToList();
-                if (!list.Remove(messageHandler))
+                if (!list.Remove(registration))
                 {
                     return;
                 }
 
                 if (list.Count == 0)
                 {
-                    m_subscribers.Remove(key);
+                    m_subscribers.TryRemove(registration.RegisterKey, out _);
                     return;
                 }
 
-                m_subscribers[key] = list.ToArray();
+                m_subscribers[registration.RegisterKey] = list.ToArray();
             }
         }
 

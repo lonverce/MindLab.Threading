@@ -1,27 +1,27 @@
 ﻿using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
+using NUnit.Framework;
 
 namespace MindLab.Threading.Tests
 {
-    [TestClass()]
+    [TestFixture]
     public class OnceFlagTests
     {
-        [TestMethod()]
+        [Test]
         public void IsSet_CreateAndGet_NotSetYet()
         {
             var flag = new OnceFlag();
             Assert.IsFalse(flag.IsSet);
         }
 
-        [TestMethod()]
+        [Test]
         public void TrySet_CreateAndSet_Ok()
         {
             var flag = new OnceFlag();
             Assert.IsTrue(flag.TrySet());
         }
 
-        [TestMethod()]
+        [Test]
         public void TrySet_SetAgain_Failed()
         {
             var flag = new OnceFlag();
@@ -29,7 +29,7 @@ namespace MindLab.Threading.Tests
             Assert.IsFalse(flag.TrySet());
         }
 
-        [TestMethod()]
+        [Test]
         public void TrySet_InParallel_OnlyOneSetOk()
         {
             var flag = new OnceFlag();

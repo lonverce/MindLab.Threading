@@ -75,21 +75,8 @@ namespace MindLab.Messaging
 
         #region Private Methods
         
-        private async Task EnqueueMessageWithCapacity(string publishKey,string bindingKey, IMessageRouter<TMessage> router, TMessage payload)
+        private async Task EnqueueMessageWithCapacity(MessageArgs<TMessage> msg)
         {
-            if (payload == null)
-            {
-                return;
-            }
-
-            var msg = new MessageArgs<TMessage>()
-            {
-                Payload = payload,
-                BindingKey = bindingKey,
-                PublishKey = publishKey,
-                FromRouter = router
-            };
-
             if (m_messageCollection.TryAdd(msg) || FullBehaviour == QueueFullBehaviour.AbandonNew)
             {
                 return;
@@ -133,9 +120,8 @@ namespace MindLab.Messaging
                 throw new ArgumentNullException(nameof(messageRouter));
             }
 
-            return await messageRouter.RegisterCallbackAsync(key, 
-                (publishKey, payload) 
-                => EnqueueMessageWithCapacity(publishKey, key, messageRouter, payload), 
+            return await messageRouter.RegisterCallbackAsync(
+                new Registration<TMessage>(key, EnqueueMessageWithCapacity), 
                 cancellation);
         }
 
