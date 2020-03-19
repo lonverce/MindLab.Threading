@@ -60,11 +60,12 @@ namespace MindLab.Messaging
         /// </summary>
         /// <param name="capacity">队列最大容量, 当队列满载时, 新消息的插入将导致旧消息被丢弃</param>
         /// <param name="behaviour"></param>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacity"/>小于1</exception>
         public MessageQueue(int capacity, QueueFullBehaviour behaviour)
         {
-            if (capacity <= 0)
+            if (capacity < 1)
             {
-                throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "应该大于0");
+                throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "Should be greater than 0");
             }
 
             m_messageCollection = new AsyncBlockingCollection<MessageArgs<TMessage>>(capacity);
@@ -111,13 +112,21 @@ namespace MindLab.Messaging
         /// <param name="messageRouter"></param>
         /// <param name="cancellation"></param>
         /// <returns>释放此对象以解除绑定</returns>
-        /// <exception cref="ArgumentNullException"><paramref name="messageRouter"/>为空</exception>
+        /// <exception cref="ArgumentNullException"><paramref name="messageRouter"/>为空 或 <paramref name="key"/>为空</exception>
         /// <remarks>每个队列对象可以同时绑定到多个消息路由器</remarks>
-        public async Task<IAsyncDisposable> BindAsync(string key, IMessageRouter<TMessage> messageRouter, CancellationToken cancellation = default)
+        public async Task<IAsyncDisposable> BindAsync(
+            string key, 
+            IMessageRouter<TMessage> messageRouter, 
+            CancellationToken cancellation = default)
         {
             if (messageRouter == null)
             {
                 throw new ArgumentNullException(nameof(messageRouter));
+            }
+
+            if (key == null)
+            {
+                throw new ArgumentNullException(nameof(key));
             }
 
             return await messageRouter.RegisterCallbackAsync(
@@ -130,7 +139,7 @@ namespace MindLab.Messaging
         /// </summary>
         /// <param name="token"></param>
         /// <returns></returns>
-        public async Task<MessageArgs<TMessage>> TakeMessageAsync(CancellationToken token)
+        public async Task<MessageArgs<TMessage>> TakeMessageAsync(CancellationToken token = default)
         {
             return await m_messageCollection.TakeAsync(token);
         }
