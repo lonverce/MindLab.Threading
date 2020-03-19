@@ -17,8 +17,4 @@
     </PackageReference>
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\MindLab.Messaging\MindLab.Messaging.csproj" />
-  </ItemGroup>
-
 </Project>
