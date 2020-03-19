@@ -2,7 +2,10 @@
 
 **MindLab.Threading**主要封装了一些在面向**async/await**异步编程时所使用的线程间同步对象。
 
-## Examples
+## 使用
+用户可从nuget中下载: [MindLab.Threading](https://www.nuget.org/packages/MindLab.Threading)
+
+## 示例
 
 ### IAsyncLock接口
 **IAsyncLock**表示一个支持异步操作的互斥锁对象接口，目前的实现类有三种，分别是**MonitorLock**、**CasLock**以及**SemaphoreLock**。下面的样例代码演示实现线程安全的自增/自减类。
