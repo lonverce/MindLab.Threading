@@ -66,13 +66,14 @@ namespace MindLab.Threading.Core
             cancellation.ThrowIfCancellationRequested();
             var completion = new TaskCompletionSource<LockStatus>();
             var isFirst = false;
+            LinkedListNode<TaskCompletionSource<LockStatus>> node;
 
             await EnterLockAsync(cancellation);
 
             try
             {
                 cancellation.ThrowIfCancellationRequested();
-                m_subscriberList.AddLast(completion);
+                node = m_subscriberList.AddLast(completion);
                 if (m_subscriberList.Count == 1)
                 {
                     isFirst = true;
@@ -110,7 +111,7 @@ namespace MindLab.Threading.Core
                 try
                 {
                     var activateNext = m_subscriberList.First.Value == completion;
-                    m_subscriberList.Remove(completion);
+                    m_subscriberList.Remove(node);
                     if (activateNext)
                     {
                         next = m_subscriberList.First.Value;
