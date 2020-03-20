@@ -108,7 +108,7 @@ namespace MindLab.Threading
                 }
             }
 
-            throw new NotImplementedException();
+            return new AsyncOnceDisposer<LinkedListNode<LockWaiterEvent>>(ReaderDisposeFunc, node);
         }
 
         /// <summary>
@@ -153,18 +153,34 @@ namespace MindLab.Threading
                 }
             }
 
-            throw new NotImplementedException();
+            return new AsyncOnceDisposer<LinkedListNode<LockWaiterEvent>>(WriterDisposeFunc, node);
         } 
 
         #endregion
 
         #region Private methods
 
+        private async Task ReaderDisposeFunc(LinkedListNode<LockWaiterEvent> listNode)
+        {
+            await using (await m_lock.LockAsync(CancellationToken.None))
+            {
+                UnsafeRemoveReader(listNode);
+            }
+        }
+
+        private async Task WriterDisposeFunc(LinkedListNode<LockWaiterEvent> listNode)
+        {
+            await using (await m_lock.LockAsync(CancellationToken.None))
+            {
+                UnsafeRemoveWriter(listNode);
+            }
+        }
+
         private void UnsafeRemoveReader(LinkedListNode<LockWaiterEvent> node)
         {
             var shouldActiveNext = (node.List == m_readingList)
                                    && (m_readingList.Count == 1);
-
+            
             node.List.Remove(node);
 
             if (!shouldActiveNext)
