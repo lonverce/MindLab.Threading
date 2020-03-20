@@ -67,6 +67,7 @@ namespace MindLab.Threading
                 {
                     waiter.SetResult(LockStatus.Activated);
                     node = m_readingList.AddLast(waiter);
+                    m_currentOperation = CurrentOperation.Reading;
                 }
                 else if (m_currentOperation == CurrentOperation.Reading)
                 {
@@ -86,6 +87,8 @@ namespace MindLab.Threading
                 }
             }
 
+            var disposer = new AsyncOnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitReadLock, node);
+
 #if NETSTANDARD2_1
             await
 #endif
@@ -100,15 +103,12 @@ namespace MindLab.Threading
 
                 if (status == LockStatus.Cancelled)
                 {
-                    await using (await m_lock.LockAsync(CancellationToken.None))
-                    {
-                        UnsafeRemoveReader(node);
-                        throw new OperationCanceledException(cancellation);
-                    }
+                    await disposer.DisposeAsync();
+                    throw new OperationCanceledException(cancellation);
                 }
             }
 
-            return new AsyncOnceDisposer<LinkedListNode<LockWaiterEvent>>(ReaderDisposeFunc, node);
+            return disposer;
         }
 
         /// <summary>
@@ -128,7 +128,10 @@ namespace MindLab.Threading
                 }
 
                 node = m_pendingWriterList.AddFirst(waiter);
+                m_currentOperation = CurrentOperation.Writing;
             }
+
+            var disposer = new AsyncOnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitWriteLock, node);
 
 #if NETSTANDARD2_1
             await
@@ -144,43 +147,23 @@ namespace MindLab.Threading
 
                 if (status == LockStatus.Cancelled)
                 {
-                    await using (await m_lock.LockAsync(CancellationToken.None))
-                    {
-                        UnsafeRemoveWriter(node);
-                    }
-
+                    await disposer.DisposeAsync();
                     throw new OperationCanceledException(cancellation);
                 }
+                return disposer;
             }
-
-            return new AsyncOnceDisposer<LinkedListNode<LockWaiterEvent>>(WriterDisposeFunc, node);
         } 
 
         #endregion
 
         #region Private methods
 
-        private async Task ReaderDisposeFunc(LinkedListNode<LockWaiterEvent> listNode)
+        private async Task InternalExitReadLock(LinkedListNode<LockWaiterEvent> node)
         {
-            await using (await m_lock.LockAsync(CancellationToken.None))
-            {
-                UnsafeRemoveReader(listNode);
-            }
-        }
-
-        private async Task WriterDisposeFunc(LinkedListNode<LockWaiterEvent> listNode)
-        {
-            await using (await m_lock.LockAsync(CancellationToken.None))
-            {
-                UnsafeRemoveWriter(listNode);
-            }
-        }
-
-        private void UnsafeRemoveReader(LinkedListNode<LockWaiterEvent> node)
-        {
+            await using var locker = await m_lock.LockAsync(CancellationToken.None);
             var shouldActiveNext = (node.List == m_readingList)
                                    && (m_readingList.Count == 1);
-            
+
             node.List.Remove(node);
 
             if (!shouldActiveNext)
@@ -205,21 +188,9 @@ namespace MindLab.Threading
             }
         }
 
-        private void UnsafeActivatePendingReaders()
+        private async Task InternalExitWriteLock(LinkedListNode<LockWaiterEvent> node)
         {
-            var tmp = m_readingList;
-            m_readingList = m_pendingReaderList;
-            m_pendingReaderList = tmp;
-            m_currentOperation = CurrentOperation.Reading;
-
-            foreach (var pendingWaiter in m_readingList)
-            {
-                pendingWaiter.TrySetResult(LockStatus.Activated);
-            }
-        }
-
-        private void UnsafeRemoveWriter(LinkedListNode<LockWaiterEvent> node)
-        {
+            await using var locker = await m_lock.LockAsync(CancellationToken.None);
             var shouldActiveNext = m_pendingWriterList.First == node
                                    && m_currentOperation == CurrentOperation.Writing;
 
@@ -242,7 +213,20 @@ namespace MindLab.Threading
             {
                 m_currentOperation = CurrentOperation.None;
             }
-        } 
+        }
+
+        private void UnsafeActivatePendingReaders()
+        {
+            var tmp = m_readingList;
+            m_readingList = m_pendingReaderList;
+            m_pendingReaderList = tmp;
+            m_currentOperation = CurrentOperation.Reading;
+
+            foreach (var pendingWaiter in m_readingList)
+            {
+                pendingWaiter.TrySetResult(LockStatus.Activated);
+            }
+        }
 
         #endregion
     }
