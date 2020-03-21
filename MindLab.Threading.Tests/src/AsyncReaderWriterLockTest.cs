@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -15,9 +16,13 @@ namespace MindLab.Threading.Tests
         public async Task WaitForReadAsync_MultipleCall_OK(int callTimes)
         {
             var locker = new AsyncReaderWriterLock();
+            var readers = new List<IDisposable>();
+
             for (int i = 0; i < callTimes; i++)
             {
-                await locker.WaitForReadAsync();
+                readers.Add(await locker.WaitForReadAsync());
+                Assert.IsTrue(locker.TryEnterRead(out var reader));
+                readers.Add(reader);
             }
         }
 
@@ -28,6 +33,7 @@ namespace MindLab.Threading.Tests
 
             using (await locker.WaitForWriteAsync())
             {
+                Assert.IsFalse(locker.TryEnterWrite(out _));
                 using var tokenSrc = new CancellationTokenSource(1000);
                 Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForWriteAsync(tokenSrc.Token));
             }
@@ -40,6 +46,7 @@ namespace MindLab.Threading.Tests
 
             using (await locker.WaitForWriteAsync())
             {
+                Assert.IsFalse(locker.TryEnterRead(out _));
                 using var tokenSrc = new CancellationTokenSource(1000);
                 Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForReadAsync(tokenSrc.Token));
             }
@@ -52,6 +59,7 @@ namespace MindLab.Threading.Tests
 
             using (await locker.WaitForReadAsync())
             {
+                Assert.IsFalse(locker.TryEnterWrite(out _));
                 using var tokenSrc = new CancellationTokenSource(1000);
                 Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForWriteAsync(tokenSrc.Token));
             }
@@ -71,6 +79,7 @@ namespace MindLab.Threading.Tests
 
             writer.Dispose();
 
+            Assert.IsTrue(locker.TryEnterRead(out _));
             await readers;
         }
 
@@ -96,8 +105,30 @@ namespace MindLab.Threading.Tests
             var reader1 = await locker.WaitForReadAsync();
             var writer = locker.WaitForWriteAsync();
             await Task.Delay(100);
+
+            Assert.IsFalse(locker.TryEnterRead(out _));
             using var tokenSrc = new CancellationTokenSource(1000);
             Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForReadAsync(tokenSrc.Token));
+        }
+
+        [Test]
+        public async Task PendingReadersWillBeMerged_AfterPendingWriterExit()
+        {
+            var locker = new AsyncReaderWriterLock();
+            var reader1 = await locker.WaitForReadAsync();
+            using var tokenSrc = new CancellationTokenSource(1000);
+            var pendingWriter = locker.WaitForWriteAsync(tokenSrc.Token);
+            await Task.Delay(100, CancellationToken.None);
+            var pendingReader = locker.WaitForReadAsync(CancellationToken.None);
+            await Task.Delay(100, CancellationToken.None);
+
+            Assert.IsFalse(pendingWriter.IsCompleted);
+            Assert.IsFalse(pendingReader.IsCompleted);
+
+            tokenSrc.Cancel();
+            await Task.Delay(100, CancellationToken.None);
+            Assert.IsTrue(pendingWriter.IsCompleted);
+            Assert.IsTrue(pendingReader.IsCompletedSuccessfully);
         }
     }
 }

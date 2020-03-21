@@ -14,47 +14,24 @@ namespace MindLab.Threading
     /// </summary>
     public class AsyncReaderWriterLock
     {
-        private enum CurrentOperation
-        {
-            /// <summary>
-            /// 表示当前没有任何读写操作，
-            /// 此时<see cref="m_readingList"/>,
-            /// <see cref="m_pendingWriterList"/>和
-            /// <see cref="m_pendingReaderList"/>应该为空
-            /// </summary>
-            None,
-
-            /// <summary>
-            /// 表示当前有读操作，并且没有等待中的写操作，此时
-            /// <see cref="m_readingList"/>应该不为空，而
-            /// <see cref="m_pendingWriterList"/>和
-            /// <see cref="m_pendingReaderList"/>应该为空
-            /// </summary>
-            Reading,
-
-            /// <summary>
-            /// 表示当前有读操作，并且有等待中的写操作，此时
-            /// <see cref="m_readingList"/>和
-            /// <see cref="m_pendingWriterList"/>应该不为空，而
-            /// <see cref="m_pendingReaderList"/>随意
-            /// </summary>
-            PendingWrite,
-
-            /// <summary>
-            /// 表示当前有写操作，此时
-            /// <see cref="m_pendingWriterList"/>应该不为空，
-            /// <see cref="m_readingList"/>应该为空，而
-            /// <see cref="m_pendingReaderList"/>随意
-            /// </summary>
-            Writing,
-        }
-
         #region Fields
         private LinkedList<LockWaiterEvent> m_readingList = new LinkedList<LockWaiterEvent>();
         private LinkedList<LockWaiterEvent> m_pendingReaderList = new LinkedList<LockWaiterEvent>();
         private readonly LinkedList<LockWaiterEvent> m_pendingWriterList = new LinkedList<LockWaiterEvent>();
-        private CurrentOperation m_currentOperation = CurrentOperation.None;
         private readonly object m_lock = new object();
+        private AbstractState m_currentState;
+        #endregion
+
+        #region Constructor
+
+        /// <summary>
+        /// 初始化异步读写锁
+        /// </summary>
+        public AsyncReaderWriterLock()
+        {
+            m_currentState = new NoneState(this);
+        }
+
         #endregion
 
         #region Public Methods
@@ -66,27 +43,12 @@ namespace MindLab.Threading
         /// <returns>通过此对象释放读锁</returns>
         public async Task<IDisposable> WaitForReadAsync(CancellationToken cancellation = default)
         {
-            var waiter = new LockWaiterEvent();
             LinkedListNode<LockWaiterEvent> node;
             lock(m_lock)
             {
-                if (m_currentOperation == CurrentOperation.None)
-                {
-                    waiter.SetResult(LockStatus.Activated);
-                    node = m_readingList.AddLast(waiter);
-                    m_currentOperation = CurrentOperation.Reading;
-                }
-                else if (m_currentOperation == CurrentOperation.Reading)
-                {
-                    Contract.Assert(!m_pendingWriterList.Any());
-                    waiter.SetResult(LockStatus.Activated);
-                    node = m_readingList.AddLast(waiter);
-                }
-                else
-                {
-                    node = m_pendingReaderList.AddLast(waiter);
-                }
+                node = m_currentState.WaitForRead();
             }
+            var waiter = node.Value;
 
             var disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitReadLock, node);
 
@@ -102,14 +64,14 @@ namespace MindLab.Threading
 
                 var status = await waiter.Task;
 
-                if (status == LockStatus.Cancelled)
+                if (status != LockStatus.Cancelled)
                 {
-                    disposer.Dispose();
-                    throw new OperationCanceledException(cancellation);
+                    return disposer;
                 }
-            }
 
-            return disposer;
+                disposer.Dispose();
+                throw new OperationCanceledException(cancellation);
+            }
         }
 
         /// <summary>
@@ -119,24 +81,13 @@ namespace MindLab.Threading
         /// <returns></returns>
         public async Task<IDisposable> WaitForWriteAsync(CancellationToken cancellation = default)
         {
-            var waiter = new LockWaiterEvent();
             LinkedListNode<LockWaiterEvent> node;
             lock (m_lock)
             {
-                node = m_pendingWriterList.AddLast(waiter);
-
-                if (m_currentOperation == CurrentOperation.None)
-                {
-                    waiter.SetResult(LockStatus.Activated);
-                    m_currentOperation = CurrentOperation.Writing;
-                }
-                else if (m_currentOperation == CurrentOperation.Reading)
-                {
-                    Contract.Assert(m_pendingWriterList.Count == 1);
-                    m_currentOperation = CurrentOperation.PendingWrite;
-                }
+                node = m_currentState.WaitForWriteAsync();
             }
 
+            var waiter = node.Value;
             var disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitWriteLock, node);
 
 #if NETSTANDARD2_1
@@ -151,35 +102,29 @@ namespace MindLab.Threading
 
                 var status = await waiter.Task;
 
-                if (status == LockStatus.Cancelled)
+                if (status != LockStatus.Cancelled)
                 {
-                    disposer.Dispose();
-                    throw new OperationCanceledException(cancellation);
+                    return disposer;
                 }
-                return disposer;
+
+                disposer.Dispose();
+                throw new OperationCanceledException(cancellation);
             }
         }
 
         /// <summary>
         /// 尝试进入读锁
         /// </summary>
-        public bool TryEnterReadAsync(out IDisposable disposer)
+        public bool TryEnterRead(out IDisposable disposer)
         {
             disposer = null;
             
             lock (m_lock)
             {
-                if (m_currentOperation != CurrentOperation.None && m_currentOperation != CurrentOperation.Reading)
+                if (!m_currentState.TryEnterRead(out var node))
                 {
                     return false;
                 }
-                Contract.Assert(m_pendingReaderList.Count == 0);
-                Contract.Assert(m_pendingWriterList.Count == 0);
-
-                var waiter = new LockWaiterEvent();
-                waiter.SetResult(LockStatus.Activated);
-                var node = m_readingList.AddLast(waiter);
-                m_currentOperation = CurrentOperation.Reading;
                 disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitReadLock, node);
                 return true;
             }
@@ -192,20 +137,13 @@ namespace MindLab.Threading
         public bool TryEnterWrite(out IDisposable disposer)
         {
             disposer = null;
-            var waiter = new LockWaiterEvent();
             lock (m_lock)
             {
-                if (m_currentOperation != CurrentOperation.None)
+                if (!m_currentState.TryEnterWrite(out var node))
                 {
                     return false;
                 }
-                Contract.Assert(m_pendingReaderList.Count == 0);
-                Contract.Assert(m_pendingWriterList.Count == 0);
-                Contract.Assert(m_readingList.Count == 0);
 
-                waiter.SetResult(LockStatus.Activated);
-                var node = m_pendingWriterList.AddFirst(waiter);
-                m_currentOperation = CurrentOperation.Writing;
                 disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitWriteLock, node);
                 return true;
             }
@@ -220,7 +158,7 @@ namespace MindLab.Threading
             lock (m_lock)
             {
                 var shouldActiveNext = (node.List == m_readingList)
-                                           && (m_readingList.Count == 1);
+                                       && (m_readingList.Count == 1);
 
                 node.List.Remove(node);
 
@@ -228,22 +166,8 @@ namespace MindLab.Threading
                 {
                     return;
                 }
-                
-                Contract.Assert(m_readingList.Count == 0);
-                
-                if (m_currentOperation == CurrentOperation.PendingWrite)
-                {
-                    Contract.Assert(m_pendingWriterList.Count > 0);
-                    m_currentOperation = CurrentOperation.Writing;
-                    m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
-                }
-                else if(m_currentOperation == CurrentOperation.Reading)
-                {
-                    Contract.Assert(m_pendingReaderList.Count == 0);
-                    Contract.Assert(m_pendingWriterList.Count == 0);
 
-                    m_currentOperation = CurrentOperation.None;
-                } 
+                m_currentState.ActiveNextOnReaderExited();
             }
         }
 
@@ -251,7 +175,6 @@ namespace MindLab.Threading
         {
             lock (m_lock)
             {
-                Contract.Assert(m_currentOperation == CurrentOperation.Writing || m_currentOperation == CurrentOperation.PendingWrite);
                 var shouldActiveNext = m_pendingWriterList.First == node;
 
                 m_pendingWriterList.Remove(node);
@@ -261,58 +184,236 @@ namespace MindLab.Threading
                     return;
                 }
 
-                if (m_currentOperation == CurrentOperation.Writing)
-                {
-                    Contract.Assert(m_readingList.Count == 0);
+                m_currentState.ActiveNextOnWriterExited();
+            }
+        }
 
-                    if (m_pendingWriterList.Any())
-                    {
-                        m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
-                    }
-                    else if(m_pendingReaderList.Count > 0)
-                    {
-                        UnsafeActivatePendingReaders();
-                    }
-                    else
-                    {
-                        m_currentOperation = CurrentOperation.None;
-                    }
+        #endregion
+
+        #region States
+        private abstract class AbstractState
+        {
+            protected readonly AsyncReaderWriterLock Owner;
+
+            protected AbstractState(AsyncReaderWriterLock owner)
+            {
+                Owner = owner;
+            }
+
+            public abstract LinkedListNode<LockWaiterEvent> WaitForRead();
+            public abstract LinkedListNode<LockWaiterEvent> WaitForWriteAsync();
+
+            public virtual bool TryEnterWrite(out LinkedListNode<LockWaiterEvent> node)
+            {
+                node = null;
+                return false;
+            }
+
+            public virtual bool TryEnterRead(out LinkedListNode<LockWaiterEvent> node)
+            {
+                node = null;
+                return false;
+            }
+
+            public virtual void ActiveNextOnWriterExited() { }
+
+            public virtual void ActiveNextOnReaderExited() { }
+        }
+
+        private sealed class NoneState : AbstractState
+        {
+            public NoneState(AsyncReaderWriterLock owner) : base(owner)
+            {
+                Contract.Assert(owner.m_pendingReaderList.Count == 0);
+                Contract.Assert(owner.m_pendingWriterList.Count == 0);
+                Contract.Assert(owner.m_readingList.Count == 0);
+            }
+
+            public override LinkedListNode<LockWaiterEvent> WaitForRead()
+            {
+                var waiter = new LockWaiterEvent();
+                waiter.SetResult(LockStatus.Activated);
+                var node = Owner.m_readingList.AddLast(waiter);
+                Owner.m_currentState = new ReadingState(Owner);
+                return node;
+            }
+
+            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            {
+                var waiter = new LockWaiterEvent();
+                var node = Owner.m_pendingWriterList.AddLast(waiter);
+                waiter.SetResult(LockStatus.Activated);
+                Owner.m_currentState = new WritingState(Owner);
+                return node;
+            }
+
+            public override bool TryEnterRead(out LinkedListNode<LockWaiterEvent> node)
+            {
+                var waiter = new LockWaiterEvent();
+                waiter.SetResult(LockStatus.Activated);
+                node = Owner.m_readingList.AddLast(waiter);
+                Owner.m_currentState = new ReadingState(Owner);
+                return true;
+            }
+
+            public override bool TryEnterWrite(out LinkedListNode<LockWaiterEvent> node)
+            {
+                var waiter = new LockWaiterEvent();
+                waiter.SetResult(LockStatus.Activated);
+                node = Owner.m_pendingWriterList.AddLast(waiter);
+                Owner.m_currentState = new WritingState(Owner);
+                return true;
+            }
+
+            public override void ActiveNextOnReaderExited()
+            {
+                throw new InvalidOperationException("m_readingList should be empty.");
+            }
+
+            public override void ActiveNextOnWriterExited()
+            {
+                throw new InvalidOperationException("m_pendingWriterList should be empty.");
+            }
+        }
+
+        private sealed class ReadingState : AbstractState
+        {
+            public ReadingState(AsyncReaderWriterLock owner) : base(owner)
+            {
+                Contract.Assert(owner.m_pendingReaderList.Count == 0);
+                Contract.Assert(owner.m_pendingWriterList.Count == 0);
+                Contract.Assert(owner.m_readingList.Count != 0);
+            }
+
+            public override LinkedListNode<LockWaiterEvent> WaitForRead()
+            {
+                var waiter = new LockWaiterEvent();
+                waiter.SetResult(LockStatus.Activated);
+                return Owner.m_readingList.AddLast(waiter);
+            }
+
+            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            {
+                var waiter = new LockWaiterEvent();
+                var node = Owner.m_pendingWriterList.AddLast(waiter);
+                Owner.m_currentState = new PendingWriteState(Owner);
+                return node;
+            }
+
+            public override bool TryEnterRead(out LinkedListNode<LockWaiterEvent> node)
+            {
+                var waiter = new LockWaiterEvent();
+                waiter.SetResult(LockStatus.Activated);
+                node = Owner.m_readingList.AddLast(waiter);
+                return true;
+            }
+
+            public override void ActiveNextOnReaderExited()
+            {
+                Owner.m_currentState = new NoneState(Owner);
+            }
+
+            public override void ActiveNextOnWriterExited()
+            {
+                throw new InvalidOperationException("m_pendingWriterList should be empty.");
+            }
+        }
+
+        private sealed class WritingState : AbstractState
+        {
+            public WritingState(AsyncReaderWriterLock owner) : base(owner)
+            {
+                Contract.Assert(owner.m_pendingWriterList.Count != 0);
+                Contract.Assert(owner.m_readingList.Count == 0);
+            }
+
+            public override LinkedListNode<LockWaiterEvent> WaitForRead()
+            {
+                var waiter = new LockWaiterEvent();
+                return Owner.m_pendingReaderList.AddLast(waiter);
+            }
+
+            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            {
+                var waiter = new LockWaiterEvent();
+                var node = Owner.m_pendingWriterList.AddLast(waiter);
+                return node;
+            }
+
+            public override void ActiveNextOnWriterExited()
+            {
+                if (Owner.m_pendingWriterList.Any())
+                {
+                    Owner.m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
+                }
+                else if (Owner.m_pendingReaderList.Count > 0)
+                {
+                    UnsafeActivatePendingReaders();
+                    Owner.m_currentState = new ReadingState(Owner);
                 }
                 else
                 {
-                    Contract.Assert(m_currentOperation == CurrentOperation.PendingWrite);
-                    Contract.Assert(m_readingList.Count != 0);
-                    UnsafeMergePendingReaders();
+                    Owner.m_currentState = new NoneState(Owner);
+                }
+            }
+
+            public override void ActiveNextOnReaderExited()
+            {
+                throw new InvalidOperationException("m_readingList should be empty.");
+            }
+
+            private void UnsafeActivatePendingReaders()
+            {
+                var tmp = Owner.m_readingList;
+                Owner.m_readingList = Owner.m_pendingReaderList;
+                Owner.m_pendingReaderList = tmp;
+                foreach (var pendingWaiter in Owner.m_readingList)
+                {
+                    pendingWaiter.TrySetResult(LockStatus.Activated);
                 }
             }
         }
 
-        private void UnsafeActivatePendingReaders()
+        private sealed class PendingWriteState : AbstractState
         {
-            var tmp = m_readingList;
-            m_readingList = m_pendingReaderList;
-            m_pendingReaderList = tmp;
-            m_currentOperation = CurrentOperation.Reading;
-
-            foreach (var pendingWaiter in m_readingList)
+            public PendingWriteState(AsyncReaderWriterLock owner) : base(owner)
             {
-                pendingWaiter.TrySetResult(LockStatus.Activated);
-            }
-        }
-
-        private void UnsafeMergePendingReaders()
-        {
-            while (m_pendingReaderList.Count != 0)
-            {
-                var first = m_pendingReaderList.First;
-                m_pendingReaderList.Remove(first);
-                m_readingList.AddLast(first);
-                first.Value.TrySetResult(LockStatus.Activated);
+                Contract.Assert(owner.m_pendingWriterList.Count != 0);
+                Contract.Assert(owner.m_readingList.Count != 0);
             }
 
-            m_currentOperation = CurrentOperation.Reading;
-        }
+            public override LinkedListNode<LockWaiterEvent> WaitForRead()
+            {
+                var waiter = new LockWaiterEvent();
+                return Owner.m_pendingReaderList.AddLast(waiter);
+            }
 
+            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            {
+                var waiter = new LockWaiterEvent();
+                var node = Owner.m_pendingWriterList.AddLast(waiter);
+                return node;
+            }
+
+            public override void ActiveNextOnReaderExited()
+            {
+                Owner.m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
+                Owner.m_currentState = new WritingState(Owner);
+            }
+
+            public override void ActiveNextOnWriterExited()
+            {
+                while (Owner.m_pendingReaderList.Count != 0)
+                {
+                    var first = Owner.m_pendingReaderList.First;
+                    Owner.m_pendingReaderList.Remove(first);
+                    Owner.m_readingList.AddLast(first);
+                    first.Value.TrySetResult(LockStatus.Activated);
+                }
+
+                Owner.m_currentState = new ReadingState(Owner);
+            }
+        } 
         #endregion
     }
 }
