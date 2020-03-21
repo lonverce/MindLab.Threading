@@ -1,14 +1,13 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
-using MindLab.Threading.Internals;
 
 namespace MindLab.Threading
 {
     /// <summary>
     /// 提供基于<see cref="SemaphoreSlim"/>实现的异步互斥锁
     /// </summary>
-    public class SemaphoreLock : IAsyncLock, ILockDisposable
+    public class SemaphoreLock : IAsyncLock
     {
         private readonly SemaphoreSlim m_semaphore = new SemaphoreSlim(1,1);
 
@@ -20,7 +19,9 @@ namespace MindLab.Threading
         public async Task<IAsyncDisposable> LockAsync(CancellationToken cancellation = default)
         {
             await m_semaphore.WaitAsync(cancellation);
-            return new LockDisposer(this);
+            return new AsyncOnceDisposer<SemaphoreLock>(
+                locker => locker.InternalUnlockAsync(),
+                this);
         }
 
         /// <summary>
@@ -36,7 +37,9 @@ namespace MindLab.Threading
                 return false;
             }
 
-            lockDisposer = new LockDisposer(this);
+            lockDisposer = new AsyncOnceDisposer<SemaphoreLock>(
+                locker => locker.InternalUnlockAsync(),
+                this);
             return true;
         }
 
@@ -45,7 +48,7 @@ namespace MindLab.Threading
             m_semaphore.Release();
         }
 
-        Task ILockDisposable.InternalUnlockAsync()
+        private Task InternalUnlockAsync()
         {
             InternalUnlock();
             return Task.CompletedTask;

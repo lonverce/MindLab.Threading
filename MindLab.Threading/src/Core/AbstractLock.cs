@@ -10,7 +10,7 @@ namespace MindLab.Threading.Core
     /// <summary>
     /// 抽象锁实现
     /// </summary>
-    public abstract class AbstractLock : IAsyncLock, ILockDisposable
+    public abstract class AbstractLock : IAsyncLock
     {
         #region Fields
 
@@ -39,7 +39,7 @@ namespace MindLab.Threading.Core
 
         #region Private Methods
 
-        async Task ILockDisposable.InternalUnlockAsync()
+        private async Task InternalUnlockAsync()
         {
             TaskCompletionSource<LockStatus> next = null;
             await EnterLockAsync(CancellationToken.None);
@@ -66,13 +66,14 @@ namespace MindLab.Threading.Core
             cancellation.ThrowIfCancellationRequested();
             var completion = new TaskCompletionSource<LockStatus>();
             var isFirst = false;
+            LinkedListNode<TaskCompletionSource<LockStatus>> node;
 
             await EnterLockAsync(cancellation);
 
             try
             {
                 cancellation.ThrowIfCancellationRequested();
-                m_subscriberList.AddLast(completion);
+                node = m_subscriberList.AddLast(completion);
                 if (m_subscriberList.Count == 1)
                 {
                     isFirst = true;
@@ -101,7 +102,9 @@ namespace MindLab.Threading.Core
                 var status = await completion.Task;
                 if (status == LockStatus.Activated)
                 {
-                    return new LockDisposer(this);
+                    return new AsyncOnceDisposer<AbstractLock>(
+                        locker => locker.InternalUnlockAsync(), 
+                        this);
                 }
 
                 TaskCompletionSource<LockStatus> next = null;
@@ -110,7 +113,7 @@ namespace MindLab.Threading.Core
                 try
                 {
                     var activateNext = m_subscriberList.First.Value == completion;
-                    m_subscriberList.Remove(completion);
+                    m_subscriberList.Remove(node);
                     if (activateNext)
                     {
                         next = m_subscriberList.First.Value;
@@ -144,7 +147,9 @@ namespace MindLab.Threading.Core
                 var completion = new TaskCompletionSource<LockStatus>();
                 completion.SetResult(LockStatus.Activated);
                 m_subscriberList.AddFirst(completion);
-                lockDisposer = new LockDisposer(this);
+                lockDisposer = new AsyncOnceDisposer<AbstractLock>(
+                    locker => locker.InternalUnlockAsync(),
+                    this);
             }
             finally
             {
