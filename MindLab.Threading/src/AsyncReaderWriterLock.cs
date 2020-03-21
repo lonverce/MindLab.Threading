@@ -84,7 +84,7 @@ namespace MindLab.Threading
             LinkedListNode<LockWaiterEvent> node;
             lock (m_lock)
             {
-                node = m_currentState.WaitForWriteAsync();
+                node = m_currentState.WaitForWrite();
             }
 
             var waiter = node.Value;
@@ -133,7 +133,6 @@ namespace MindLab.Threading
         /// <summary>
         /// 尝试进入写锁
         /// </summary>
-        /// <returns>如果不能立刻获得写锁, 则返回null</returns>
         public bool TryEnterWrite(out IDisposable disposer)
         {
             disposer = null;
@@ -167,7 +166,7 @@ namespace MindLab.Threading
                     return;
                 }
 
-                m_currentState.ActiveNextOnReaderExited();
+                m_currentState.OnReadingListBecomeEmpty();
             }
         }
 
@@ -184,7 +183,7 @@ namespace MindLab.Threading
                     return;
                 }
 
-                m_currentState.ActiveNextOnWriterExited();
+                m_currentState.OnTheFirstWriterDequeue();
             }
         }
 
@@ -201,7 +200,7 @@ namespace MindLab.Threading
             }
 
             public abstract LinkedListNode<LockWaiterEvent> WaitForRead();
-            public abstract LinkedListNode<LockWaiterEvent> WaitForWriteAsync();
+            public abstract LinkedListNode<LockWaiterEvent> WaitForWrite();
 
             public virtual bool TryEnterWrite(out LinkedListNode<LockWaiterEvent> node)
             {
@@ -215,13 +214,19 @@ namespace MindLab.Threading
                 return false;
             }
 
-            public virtual void ActiveNextOnWriterExited() { }
+            public virtual void OnTheFirstWriterDequeue() { }
 
-            public virtual void ActiveNextOnReaderExited() { }
+            public virtual void OnReadingListBecomeEmpty() { }
         }
 
+        /// <summary>
+        /// 表示空闲状态, 没有任何的读写请求
+        /// </summary>
         private sealed class NoneState : AbstractState
         {
+            /// <summary>
+            /// 表示空闲状态, 没有任何的读写请求
+            /// </summary>
             public NoneState(AsyncReaderWriterLock owner) : base(owner)
             {
                 Contract.Assert(owner.m_pendingReaderList.Count == 0);
@@ -231,6 +236,7 @@ namespace MindLab.Threading
 
             public override LinkedListNode<LockWaiterEvent> WaitForRead()
             {
+                // 因为当前没有任何读写操作, 所以可以立刻让调用方获得读锁
                 var waiter = new LockWaiterEvent();
                 waiter.SetResult(LockStatus.Activated);
                 var node = Owner.m_readingList.AddLast(waiter);
@@ -238,8 +244,9 @@ namespace MindLab.Threading
                 return node;
             }
 
-            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            public override LinkedListNode<LockWaiterEvent> WaitForWrite()
             {
+                // 因为当前没有任何读写操作, 所以可以立刻让调用方获得写锁
                 var waiter = new LockWaiterEvent();
                 var node = Owner.m_pendingWriterList.AddLast(waiter);
                 waiter.SetResult(LockStatus.Activated);
@@ -249,35 +256,39 @@ namespace MindLab.Threading
 
             public override bool TryEnterRead(out LinkedListNode<LockWaiterEvent> node)
             {
-                var waiter = new LockWaiterEvent();
-                waiter.SetResult(LockStatus.Activated);
-                node = Owner.m_readingList.AddLast(waiter);
-                Owner.m_currentState = new ReadingState(Owner);
+                // 因为当前没有任何读写操作, 所以可以立刻让调用方获得读锁
+                node = WaitForRead();
                 return true;
             }
 
             public override bool TryEnterWrite(out LinkedListNode<LockWaiterEvent> node)
             {
-                var waiter = new LockWaiterEvent();
-                waiter.SetResult(LockStatus.Activated);
-                node = Owner.m_pendingWriterList.AddLast(waiter);
-                Owner.m_currentState = new WritingState(Owner);
+                // 因为当前没有任何读写操作, 所以可以立刻让调用方获得写锁
+                node = WaitForWrite();
                 return true;
             }
 
-            public override void ActiveNextOnReaderExited()
+            // 在此状态下, 这个方法不可能被触发
+            public override void OnReadingListBecomeEmpty()
             {
                 throw new InvalidOperationException("m_readingList should be empty.");
             }
 
-            public override void ActiveNextOnWriterExited()
+            // 在此状态下, 这个方法不可能被触发
+            public override void OnTheFirstWriterDequeue()
             {
                 throw new InvalidOperationException("m_pendingWriterList should be empty.");
             }
         }
 
+        /// <summary>
+        /// 表示当前处于读锁状态, 并且没有等待中的写锁请求
+        /// </summary>
         private sealed class ReadingState : AbstractState
         {
+            /// <summary>
+            /// 表示当前处于读锁状态, 并且没有等待中的写锁请求
+            /// </summary>
             public ReadingState(AsyncReaderWriterLock owner) : base(owner)
             {
                 Contract.Assert(owner.m_pendingReaderList.Count == 0);
@@ -287,13 +298,17 @@ namespace MindLab.Threading
 
             public override LinkedListNode<LockWaiterEvent> WaitForRead()
             {
+                // 因为当前已获得读锁, 而且没有等待中的写锁请求,
+                // 所以可以让调用方立刻获得读锁
                 var waiter = new LockWaiterEvent();
                 waiter.SetResult(LockStatus.Activated);
                 return Owner.m_readingList.AddLast(waiter);
             }
 
-            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            public override LinkedListNode<LockWaiterEvent> WaitForWrite()
             {
+                // 因为当前已获得读锁, 如果有新的写锁请求,
+                // 则导致状态转移到 PendingWrite
                 var waiter = new LockWaiterEvent();
                 var node = Owner.m_pendingWriterList.AddLast(waiter);
                 Owner.m_currentState = new PendingWriteState(Owner);
@@ -302,25 +317,32 @@ namespace MindLab.Threading
 
             public override bool TryEnterRead(out LinkedListNode<LockWaiterEvent> node)
             {
-                var waiter = new LockWaiterEvent();
-                waiter.SetResult(LockStatus.Activated);
-                node = Owner.m_readingList.AddLast(waiter);
+                // 因为当前已获得读锁, 而且没有等待中的写锁请求,
+                // 所以可以让调用方立刻获得读锁
+                node = WaitForRead();
                 return true;
             }
 
-            public override void ActiveNextOnReaderExited()
+            public override void OnReadingListBecomeEmpty()
             {
+                // 因为没有等待中的写锁请求, 所以可以回到空闲状态
                 Owner.m_currentState = new NoneState(Owner);
             }
 
-            public override void ActiveNextOnWriterExited()
+            public override void OnTheFirstWriterDequeue()
             {
                 throw new InvalidOperationException("m_pendingWriterList should be empty.");
             }
         }
 
+        /// <summary>
+        /// 表示当前处于写锁状态
+        /// </summary>
         private sealed class WritingState : AbstractState
         {
+            /// <summary>
+            /// 表示当前处于写锁状态
+            /// </summary>
             public WritingState(AsyncReaderWriterLock owner) : base(owner)
             {
                 Contract.Assert(owner.m_pendingWriterList.Count != 0);
@@ -333,35 +355,42 @@ namespace MindLab.Threading
                 return Owner.m_pendingReaderList.AddLast(waiter);
             }
 
-            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            public override LinkedListNode<LockWaiterEvent> WaitForWrite()
             {
                 var waiter = new LockWaiterEvent();
                 var node = Owner.m_pendingWriterList.AddLast(waiter);
                 return node;
             }
 
-            public override void ActiveNextOnWriterExited()
+            public override void OnTheFirstWriterDequeue()
             {
                 if (Owner.m_pendingWriterList.Any())
                 {
+                    // 如果存在下一个写锁请求, 则触发下一个写锁
                     Owner.m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
                 }
                 else if (Owner.m_pendingReaderList.Count > 0)
                 {
+                    // 如果没有下一个写锁请求, 而是存在多个读锁请求, 
+                    // 则触发所有读锁, 然后状态转移
                     UnsafeActivatePendingReaders();
                     Owner.m_currentState = new ReadingState(Owner);
                 }
                 else
                 {
+                    // 如果啥请求都没有, 则回到空闲状态
                     Owner.m_currentState = new NoneState(Owner);
                 }
             }
 
-            public override void ActiveNextOnReaderExited()
+            public override void OnReadingListBecomeEmpty()
             {
                 throw new InvalidOperationException("m_readingList should be empty.");
             }
 
+            /// <summary>
+            /// 触发所有等待中的读锁请求
+            /// </summary>
             private void UnsafeActivatePendingReaders()
             {
                 var tmp = Owner.m_readingList;
@@ -374,8 +403,14 @@ namespace MindLab.Threading
             }
         }
 
+        /// <summary>
+        /// 表示当前处于读锁状态, 但存在等待中的写锁请求
+        /// </summary>
         private sealed class PendingWriteState : AbstractState
         {
+            /// <summary>
+            /// 表示当前处于读锁状态, 但存在等待中的写锁请求
+            /// </summary>
             public PendingWriteState(AsyncReaderWriterLock owner) : base(owner)
             {
                 Contract.Assert(owner.m_pendingWriterList.Count != 0);
@@ -388,21 +423,29 @@ namespace MindLab.Threading
                 return Owner.m_pendingReaderList.AddLast(waiter);
             }
 
-            public override LinkedListNode<LockWaiterEvent> WaitForWriteAsync()
+            public override LinkedListNode<LockWaiterEvent> WaitForWrite()
             {
                 var waiter = new LockWaiterEvent();
                 var node = Owner.m_pendingWriterList.AddLast(waiter);
                 return node;
             }
 
-            public override void ActiveNextOnReaderExited()
+            public override void OnReadingListBecomeEmpty()
             {
+                // 当所有读锁都退出后, 立刻触发第一个写锁请求
                 Owner.m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
                 Owner.m_currentState = new WritingState(Owner);
             }
 
-            public override void ActiveNextOnWriterExited()
+            public override void OnTheFirstWriterDequeue()
             {
+                if (Owner.m_pendingWriterList.Any())
+                {
+                    return;
+                }
+
+                // 由于所有等待中的写锁请求都被取消了,
+                // 所以等待中的读锁请求可以立刻被合并到运行中的读锁
                 while (Owner.m_pendingReaderList.Count != 0)
                 {
                     var first = Owner.m_pendingReaderList.First;

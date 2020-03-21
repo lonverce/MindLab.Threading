@@ -130,5 +130,29 @@ namespace MindLab.Threading.Tests
             Assert.IsTrue(pendingWriter.IsCompleted);
             Assert.IsTrue(pendingReader.IsCompletedSuccessfully);
         }
+
+        [Test]
+        public async Task PendingReadersWillNotBeMerged_UntilAllPendingWritersRemoved()
+        {
+            var locker = new AsyncReaderWriterLock();
+            var reader1 = await locker.WaitForReadAsync();
+            using var tokenSrc = new CancellationTokenSource(1000);
+            var pendingWriter = locker.WaitForWriteAsync(tokenSrc.Token);
+            var pendingWriter2 = locker.WaitForWriteAsync(CancellationToken.None);
+
+            await Task.Delay(100, CancellationToken.None);
+            var pendingReader = locker.WaitForReadAsync(CancellationToken.None);
+            await Task.Delay(100, CancellationToken.None);
+
+            Assert.IsFalse(pendingWriter.IsCompleted);
+            Assert.IsFalse(pendingWriter2.IsCompleted);
+            Assert.IsFalse(pendingReader.IsCompleted);
+
+            tokenSrc.Cancel();
+            await Task.Delay(100, CancellationToken.None);
+            Assert.IsTrue(pendingWriter.IsCompleted);
+            Assert.IsFalse(pendingWriter2.IsCompleted);
+            Assert.IsFalse(pendingReader.IsCompleted);
+        }
     }
 }
