@@ -16,8 +16,36 @@ namespace MindLab.Threading
     {
         private enum CurrentOperation
         {
+            /// <summary>
+            /// 表示当前没有任何读写操作，
+            /// 此时<see cref="m_readingList"/>,
+            /// <see cref="m_pendingWriterList"/>和
+            /// <see cref="m_pendingReaderList"/>应该为空
+            /// </summary>
             None,
+
+            /// <summary>
+            /// 表示当前有读操作，并且没有等待中的写操作，此时
+            /// <see cref="m_readingList"/>应该不为空，而
+            /// <see cref="m_pendingWriterList"/>和
+            /// <see cref="m_pendingReaderList"/>应该为空
+            /// </summary>
             Reading,
+
+            /// <summary>
+            /// 表示当前有读操作，并且有等待中的写操作，此时
+            /// <see cref="m_readingList"/>和
+            /// <see cref="m_pendingWriterList"/>应该不为空，而
+            /// <see cref="m_pendingReaderList"/>随意
+            /// </summary>
+            PendingWrite,
+
+            /// <summary>
+            /// 表示当前有写操作，此时
+            /// <see cref="m_pendingWriterList"/>应该不为空，
+            /// <see cref="m_readingList"/>应该为空，而
+            /// <see cref="m_pendingReaderList"/>随意
+            /// </summary>
             Writing,
         }
 
@@ -50,15 +78,9 @@ namespace MindLab.Threading
                 }
                 else if (m_currentOperation == CurrentOperation.Reading)
                 {
-                    if (m_pendingWriterList.Any())
-                    {
-                        node = m_pendingReaderList.AddLast(waiter);
-                    }
-                    else
-                    {
-                        waiter.SetResult(LockStatus.Activated);
-                        node = m_readingList.AddLast(waiter);
-                    }
+                    Contract.Assert(!m_pendingWriterList.Any());
+                    waiter.SetResult(LockStatus.Activated);
+                    node = m_readingList.AddLast(waiter);
                 }
                 else
                 {
@@ -101,13 +123,18 @@ namespace MindLab.Threading
             LinkedListNode<LockWaiterEvent> node;
             lock (m_lock)
             {
+                node = m_pendingWriterList.AddLast(waiter);
+
                 if (m_currentOperation == CurrentOperation.None)
                 {
                     waiter.SetResult(LockStatus.Activated);
+                    m_currentOperation = CurrentOperation.Writing;
                 }
-
-                node = m_pendingWriterList.AddFirst(waiter);
-                m_currentOperation = CurrentOperation.Writing;
+                else if (m_currentOperation == CurrentOperation.Reading)
+                {
+                    Contract.Assert(m_pendingWriterList.Count == 1);
+                    m_currentOperation = CurrentOperation.PendingWrite;
+                }
             }
 
             var disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitWriteLock, node);
@@ -115,7 +142,7 @@ namespace MindLab.Threading
 #if NETSTANDARD2_1
             await
 #endif
-                using (cancellation.Register(() => waiter.TrySetResult(LockStatus.Cancelled)))
+            using (cancellation.Register(() => waiter.TrySetResult(LockStatus.Cancelled)))
             {
                 if (cancellation.IsCancellationRequested)
                 {
@@ -139,35 +166,22 @@ namespace MindLab.Threading
         public bool TryEnterReadAsync(out IDisposable disposer)
         {
             disposer = null;
-            var waiter = new LockWaiterEvent();
-
+            
             lock (m_lock)
             {
-                LinkedListNode<LockWaiterEvent> node;
-
-                if (m_currentOperation == CurrentOperation.None)
+                if (m_currentOperation != CurrentOperation.None && m_currentOperation != CurrentOperation.Reading)
                 {
-                    waiter.SetResult(LockStatus.Activated);
-                    node = m_readingList.AddLast(waiter);
-                    m_currentOperation = CurrentOperation.Reading;
-                    disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitReadLock, node);
-                    return true;
+                    return false;
                 }
+                Contract.Assert(m_pendingReaderList.Count == 0);
+                Contract.Assert(m_pendingWriterList.Count == 0);
 
-                if (m_currentOperation == CurrentOperation.Reading)
-                {
-                    if (m_pendingWriterList.Any())
-                    {
-                        return false;
-                    }
-
-                    waiter.SetResult(LockStatus.Activated);
-                    node = m_readingList.AddLast(waiter);
-                    disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitReadLock, node);
-                    return true;
-                }
-
-                return false;
+                var waiter = new LockWaiterEvent();
+                waiter.SetResult(LockStatus.Activated);
+                var node = m_readingList.AddLast(waiter);
+                m_currentOperation = CurrentOperation.Reading;
+                disposer = new OnceDisposer<LinkedListNode<LockWaiterEvent>>(InternalExitReadLock, node);
+                return true;
             }
         }
 
@@ -185,6 +199,9 @@ namespace MindLab.Threading
                 {
                     return false;
                 }
+                Contract.Assert(m_pendingReaderList.Count == 0);
+                Contract.Assert(m_pendingWriterList.Count == 0);
+                Contract.Assert(m_readingList.Count == 0);
 
                 waiter.SetResult(LockStatus.Activated);
                 var node = m_pendingWriterList.AddFirst(waiter);
@@ -211,20 +228,20 @@ namespace MindLab.Threading
                 {
                     return;
                 }
-
+                
                 Contract.Assert(m_readingList.Count == 0);
-
-                if (m_pendingWriterList.Any())
+                
+                if (m_currentOperation == CurrentOperation.PendingWrite)
                 {
+                    Contract.Assert(m_pendingWriterList.Count > 0);
                     m_currentOperation = CurrentOperation.Writing;
                     m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
                 }
-                else if (m_pendingReaderList.Any())
+                else if(m_currentOperation == CurrentOperation.Reading)
                 {
-                    UnsafeActivatePendingReaders();
-                }
-                else
-                {
+                    Contract.Assert(m_pendingReaderList.Count == 0);
+                    Contract.Assert(m_pendingWriterList.Count == 0);
+
                     m_currentOperation = CurrentOperation.None;
                 } 
             }
@@ -234,8 +251,8 @@ namespace MindLab.Threading
         {
             lock (m_lock)
             {
-                var shouldActiveNext = m_pendingWriterList.First == node
-                                           && m_currentOperation == CurrentOperation.Writing;
+                Contract.Assert(m_currentOperation == CurrentOperation.Writing || m_currentOperation == CurrentOperation.PendingWrite);
+                var shouldActiveNext = m_pendingWriterList.First == node;
 
                 m_pendingWriterList.Remove(node);
 
@@ -244,18 +261,29 @@ namespace MindLab.Threading
                     return;
                 }
 
-                if (m_pendingWriterList.Any())
+                if (m_currentOperation == CurrentOperation.Writing)
                 {
-                    m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
-                }
-                else if (m_pendingReaderList.Any())
-                {
-                    UnsafeActivatePendingReaders();
+                    Contract.Assert(m_readingList.Count == 0);
+
+                    if (m_pendingWriterList.Any())
+                    {
+                        m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
+                    }
+                    else if(m_pendingReaderList.Count > 0)
+                    {
+                        UnsafeActivatePendingReaders();
+                    }
+                    else
+                    {
+                        m_currentOperation = CurrentOperation.None;
+                    }
                 }
                 else
                 {
-                    m_currentOperation = CurrentOperation.None;
-                } 
+                    Contract.Assert(m_currentOperation == CurrentOperation.PendingWrite);
+                    Contract.Assert(m_readingList.Count != 0);
+                    UnsafeMergePendingReaders();
+                }
             }
         }
 
@@ -270,6 +298,19 @@ namespace MindLab.Threading
             {
                 pendingWaiter.TrySetResult(LockStatus.Activated);
             }
+        }
+
+        private void UnsafeMergePendingReaders()
+        {
+            while (m_pendingReaderList.Count != 0)
+            {
+                var first = m_pendingReaderList.First;
+                m_pendingReaderList.Remove(first);
+                m_readingList.AddLast(first);
+                first.Value.TrySetResult(LockStatus.Activated);
+            }
+
+            m_currentOperation = CurrentOperation.Reading;
         }
 
         #endregion
