@@ -26,7 +26,7 @@ namespace MindLab.Threading.Tests
         {
             var locker = new AsyncReaderWriterLock();
 
-            await using (await locker.WaitForWriteAsync())
+            using (await locker.WaitForWriteAsync())
             {
                 using var tokenSrc = new CancellationTokenSource(1000);
                 Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForWriteAsync(tokenSrc.Token));
@@ -38,12 +38,10 @@ namespace MindLab.Threading.Tests
         {
             var locker = new AsyncReaderWriterLock();
 
-            await using (await locker.WaitForWriteAsync())
+            using (await locker.WaitForWriteAsync())
             {
-                using (var tokenSrc = new CancellationTokenSource(1000))
-                {
-                    Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForReadAsync(tokenSrc.Token));
-                }
+                using var tokenSrc = new CancellationTokenSource(1000);
+                Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForReadAsync(tokenSrc.Token));
             }
         }
 
@@ -52,12 +50,10 @@ namespace MindLab.Threading.Tests
         {
             var locker = new AsyncReaderWriterLock();
 
-            await using (await locker.WaitForReadAsync())
+            using (await locker.WaitForReadAsync())
             {
-                using (var tokenSrc = new CancellationTokenSource(1000))
-                {
-                    Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForWriteAsync(tokenSrc.Token));
-                }
+                using var tokenSrc = new CancellationTokenSource(1000);
+                Assert.CatchAsync<OperationCanceledException>(() => locker.WaitForWriteAsync(tokenSrc.Token));
             }
         }
 
@@ -73,7 +69,7 @@ namespace MindLab.Threading.Tests
 
             Assert.IsFalse(readers.IsCompleted);
 
-            await writer.DisposeAsync();
+            writer.Dispose();
 
             await readers;
         }
@@ -87,8 +83,8 @@ namespace MindLab.Threading.Tests
 
             var writer = locker.WaitForWriteAsync();
 
-            await reader1.DisposeAsync();
-            await reader2.DisposeAsync();
+            reader1.Dispose();
+            reader2.Dispose();
 
             await writer;
         }
