@@ -136,3 +136,30 @@ private async Task ShowDataAsync(CancellationToken token)
 }
 
 ```
+
+### AsyncReaderWriterLock
+AsyncReaderWriterLock 在功能上与 **System.Threading.ReaderWriterLockSlim** 类似, 只是采用了异步方法, 但我们没有提供 EnterUpgradableReadLock 的功能。
+
+```csharp
+class MyClass
+{
+    private readonly List<int> m_values = new List<int>();
+    private readonly AsyncReaderWriterLock m_lock = new AsyncReaderWriterLock();
+    
+    public async Task<bool> ContainsAsync(int value, CancellationToken cancellation)
+    {
+        using(await m_lock.WaitForReadAsync(cancellation))
+        {
+            return m_values.Contains(value);
+        }
+    }
+    
+    public async Task AddAsync(int value, CancellationToken cancellation)
+    {
+        using(await m_lock.WaitForWriteAsync(cancellation))
+        {
+            m_values.Add(value);
+        }
+    }
+}
+```
