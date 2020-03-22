@@ -374,7 +374,6 @@ namespace MindLab.Threading
                     // 如果没有下一个写锁请求, 而是存在多个读锁请求, 
                     // 则触发所有读锁, 然后状态转移
                     UnsafeActivatePendingReaders();
-                    Owner.m_currentState = new ReadingState(Owner);
                 }
                 else
                 {
@@ -396,7 +395,9 @@ namespace MindLab.Threading
                 var tmp = Owner.m_readingList;
                 Owner.m_readingList = Owner.m_pendingReaderList;
                 Owner.m_pendingReaderList = tmp;
-                foreach (var pendingWaiter in Owner.m_readingList)
+                Owner.m_currentState = new ReadingState(Owner);
+
+                foreach (var pendingWaiter in Owner.m_readingList.ToArray())
                 {
                     pendingWaiter.TrySetResult(LockStatus.Activated);
                 }
@@ -433,8 +434,8 @@ namespace MindLab.Threading
             public override void OnReadingListBecomeEmpty()
             {
                 // 当所有读锁都退出后, 立刻触发第一个写锁请求
-                Owner.m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
                 Owner.m_currentState = new WritingState(Owner);
+                Owner.m_pendingWriterList.First.Value.TrySetResult(LockStatus.Activated);
             }
 
             public override void OnTheFirstWriterDequeue()
@@ -443,6 +444,7 @@ namespace MindLab.Threading
                 {
                     return;
                 }
+                var evtList = new List<LockWaiterEvent>();
 
                 // 由于所有等待中的写锁请求都被取消了,
                 // 所以等待中的读锁请求可以立刻被合并到运行中的读锁
@@ -451,10 +453,15 @@ namespace MindLab.Threading
                     var first = Owner.m_pendingReaderList.First;
                     Owner.m_pendingReaderList.Remove(first);
                     Owner.m_readingList.AddLast(first);
-                    first.Value.TrySetResult(LockStatus.Activated);
+                    evtList.Add(first.Value);
                 }
 
                 Owner.m_currentState = new ReadingState(Owner);
+
+                foreach(var evt in evtList)
+                {
+                    evt.TrySetResult(LockStatus.Activated);
+                }
             }
         } 
         #endregion

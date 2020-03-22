@@ -154,5 +154,29 @@ namespace MindLab.Threading.Tests
             Assert.IsFalse(pendingWriter2.IsCompleted);
             Assert.IsFalse(pendingReader.IsCompleted);
         }
+
+        [Test]
+        public async Task MultiThreadTest()
+        {
+            List<Task> tasks = new List<Task>();
+            var locker = new AsyncReaderWriterLock();
+
+            for(int i = 0; i < 10; ++i)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    using (await locker.WaitForReadAsync())
+                    {
+                        await Task.Delay(500);
+                    }
+                    using (await locker.WaitForWriteAsync())
+                    {
+                        await Task.Delay(500);
+                    }
+                }));
+            }
+
+            await Task.WhenAll(tasks.ToArray());
+        }
     }
 }
